@@ -218,4 +218,82 @@ describe('EncounterView 服务端渲染冒烟（无需浏览器）', () => {
     expect(html).toContain('段#0 耗时 3（占 3/4）');
     expect(html).toContain('段#1 耗时 1（占 1/4）');
   });
+
+  it('十六位权重逐位展示，末位不被浮点舍入', () => {
+    // 9007199254740993 = 2^53+1；经 JSON.parse 会被舍成 9007199254740992
+    const w = '9007199254740993';
+    const payload: EncounterPayload = {
+      stage: STAGE,
+      fly_a: {
+        id: 'A', width: 1000, height: 1000,
+        start: { x: 0, y: 4500 },
+        waypoints: [{ x: 4500, y: 4500 }],
+        end: { x: 9000, y: 4500 },
+        duration_weights: [w, '1'],
+      },
+      fly_b: {
+        id: 'B', width: 1000, height: 1000,
+        start: { x: 5000, y: 0 }, end: { x: 5000, y: 9000 },
+      },
+    };
+    const html = renderToStaticMarkup(
+      createElement(EncounterView, { payload, result: SAFE_RESULT }),
+    );
+    expect(html).toContain('data-testid="a-seg-duration-0"');
+    expect(html).toContain(`段#0 耗时 ${w}（占 ${w}/9007199254740994）`);
+    expect(html).toContain('段#1 耗时 1（占 1/9007199254740994）');
+    expect(html).not.toContain('9007199254740992');
+  });
+
+  it('三百一十位权重逐段展示精确权重与占比（不隐藏、不含 Infinity/科学计数法）', () => {
+    const w = '1' + '0'.repeat(309); // 10^309（310 位，超出 Number.MAX_VALUE）
+    const total = '1' + '0'.repeat(308) + '1'; // 10^309 + 1
+    const payload: EncounterPayload = {
+      stage: STAGE,
+      fly_a: {
+        id: 'A', width: 1000, height: 1000,
+        start: { x: 0, y: 4500 },
+        waypoints: [{ x: 4500, y: 4500 }],
+        end: { x: 9000, y: 4500 },
+        duration_weights: [w, '1'],
+      },
+      fly_b: {
+        id: 'B', width: 1000, height: 1000,
+        start: { x: 5000, y: 0 }, end: { x: 5000, y: 9000 },
+      },
+    };
+    const html = renderToStaticMarkup(
+      createElement(EncounterView, { payload, result: SAFE_RESULT }),
+    );
+    expect(html).toContain('data-testid="a-seg-duration-0"');
+    expect(html).toContain(`段#0 耗时 ${w}（占 ${w}/${total}）`);
+    expect(html).toContain(`段#1 耗时 1（占 1/${total}）`);
+    expect(html).not.toContain('Infinity');
+    expect(html).not.toContain('e+');
+  });
+
+  it('两段均为三百零九位权重时占比总量为精确总和而非 Infinity', () => {
+    const w = '5' + '0'.repeat(308); // 5×10^308（309 位）
+    const total = '1' + '0'.repeat(309); // 5×10^308 + 5×10^308 = 10^309
+    const payload: EncounterPayload = {
+      stage: STAGE,
+      fly_a: {
+        id: 'A', width: 1000, height: 1000,
+        start: { x: 0, y: 4500 },
+        waypoints: [{ x: 4500, y: 4500 }],
+        end: { x: 9000, y: 4500 },
+        duration_weights: [w, w],
+      },
+      fly_b: {
+        id: 'B', width: 1000, height: 1000,
+        start: { x: 8000, y: 0 }, end: { x: 8000, y: 9000 },
+      },
+    };
+    const html = renderToStaticMarkup(
+      createElement(EncounterView, { payload, result: SAFE_RESULT }),
+    );
+    expect(html).toContain(`段#0 耗时 ${w}（占 ${w}/${total}）`);
+    expect(html).toContain(`段#1 耗时 ${w}（占 ${w}/${total}）`);
+    expect(html).not.toContain('Infinity');
+  });
 });

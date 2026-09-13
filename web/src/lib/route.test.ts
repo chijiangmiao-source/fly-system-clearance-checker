@@ -218,10 +218,10 @@ describe('交会方案：segmentDurations 各段相对耗时', () => {
     expect(segmentDurations({ ...flyA, duration_weights: [] })).toBeNull();
   });
 
-  it('提供权重时返回各段相对耗时与权重总和', () => {
+  it('提供权重时返回各段相对耗时与权重总和（总和为精确十进制串）', () => {
     expect(segmentDurations({ ...flyA, duration_weights: [3, 1] })).toEqual({
       weights: [3, 1],
-      total: 4,
+      total: '4',
     });
   });
 
@@ -231,12 +231,42 @@ describe('交会方案：segmentDurations 各段相对耗时', () => {
       start: { x: 5000, y: 0 }, end: { x: 5000, y: 9000 },
       duration_weights: [5],
     };
-    expect(segmentDurations(one)).toEqual({ weights: [5], total: 5 });
+    expect(segmentDurations(one)).toEqual({ weights: [5], total: '5' });
   });
 
   it('长度与段数不符或非正整数时防御性返回 null', () => {
     expect(segmentDurations({ ...flyA, duration_weights: [1, 2, 3] })).toBeNull();
     expect(segmentDurations({ ...flyA, duration_weights: [1, 0] })).toBeNull();
     expect(segmentDurations({ ...flyA, duration_weights: [1, 1.5] })).toBeNull();
+  });
+
+  it('十六位权重（超过安全整数）保留精确十进制串，不被浮点舍入', () => {
+    // 9007199254740993 = 2^53+1，JSON.parse 会舍成 9007199254740992
+    const w = '9007199254740993';
+    const d = segmentDurations({ ...flyA, duration_weights: [w, '1'] });
+    expect(d).not.toBeNull();
+    expect(d!.weights[0]).toBe(w);
+    expect(d!.total).toBe('9007199254740994');
+  });
+
+  it('三百一十位权重与三百零九位双权重：字符串精确累加，不产生 Infinity', () => {
+    const w310 = '1' + '0'.repeat(309); // 10^309，超过 Number.MAX_VALUE，JSON.parse → Infinity
+    const d1 = segmentDurations({ ...flyA, duration_weights: [w310, '1'] });
+    expect(d1).not.toBeNull();
+    expect(d1!.weights[0]).toBe(w310);
+    expect(d1!.total).toBe('1' + '0'.repeat(308) + '1'); // 10^309 + 1
+
+    // 两个 309 位权重 5×10^308 各一份，精确总和 = 10^309（310 位）
+    const a = '5' + '0'.repeat(308);
+    const d2 = segmentDurations({ ...flyA, duration_weights: [a, a] });
+    expect(d2).not.toBeNull();
+    expect(d2!.weights).toEqual([a, a]);
+    expect(d2!.total).toBe('1' + '0'.repeat(309));
+    expect(Number.isFinite(Number(d2!.total))).toBe(false); // 确证超出浮点范围但仍精确
+  });
+
+  it('安全范围内的十进制串归一化为 number', () => {
+    const d = segmentDurations({ ...flyA, duration_weights: ['003', 1] });
+    expect(d).toEqual({ weights: [3, 1], total: '4' });
   });
 });

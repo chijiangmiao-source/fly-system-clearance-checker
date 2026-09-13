@@ -85,6 +85,23 @@ const CORRIDOR_HIT_WEIGHTED = corridor([1, 3]);
 const CORRIDOR_BAD_LENGTH = corridor([1, 2, 3]);
 const CORRIDOR_BAD_ZERO = corridor([1, 0]);
 
+// 超大权重必须以原始 JSON 数字字面量保留在文本中（不能经 JS number，否则
+// 提交前就已舍入）；直接拼请求文本，weightLiterals 为逐位精确的十进制串。
+const corridorWeightedText = (weightLiterals: readonly string[]) => `{
+  "stage": { "width": 10000, "height": 10000 },
+  "fly_a": {
+    "id": "A", "width": 1000, "height": 1000,
+    "start": { "x": 0, "y": 4500 },
+    "waypoints": [ { "x": 4500, "y": 4500 } ],
+    "end": { "x": 9000, "y": 4500 },
+    "duration_weights": [${weightLiterals.join(', ')}]
+  },
+  "fly_b": {
+    "id": "B", "width": 1000, "height": 1000,
+    "start": { "x": 5000, "y": 0 }, "end": { "x": 5000, "y": 9000 }
+  }
+}`;
+
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await page.getByTestId('tab-encounter').click();
@@ -276,4 +293,62 @@ test('交会-非正权重：定位到具体下标 fly_a.duration_weights.1', asy
   await expect(page.getByTestId('encounter-error-path')).toHaveText('fly_a.duration_weights.1');
   await expect(page.getByTestId('encounter-input')).toHaveValue(CORRIDOR_BAD_ZERO);
   await expect(page.getByTestId('encounter-view')).toHaveCount(0);
+});
+
+test('交会-十六位权重：检测完成，路线标注逐位显示原始权重，末位不舍入', async ({ page }) => {
+  // 9007199254740993 = 2^53+1；曾被 JSON.parse 舍成 9007199254740992
+  const w = '9007199254740993';
+  const total = '9007199254740994';
+  await page.getByTestId('encounter-input').fill(corridorWeightedText([w, '1']));
+  await page.getByTestId('encounter-submit-btn').click();
+
+  // 检测仍能完成（首段极慢、错开走廊，全程安全）
+  await expect(page.getByTestId('encounter-safe-message')).toBeVisible();
+  // 分段耗时逐位精确，占比总量为精确总和而非舍入值
+  await expect(page.getByTestId('a-seg-duration-0')).toHaveText(
+    `段#0 耗时 ${w}（占 ${w}/${total}）`,
+  );
+  await expect(page.getByTestId('a-seg-duration-1')).toHaveText(
+    `段#1 耗时 1（占 1/${total}）`,
+  );
+  await expect(page.getByTestId('encounter-view')).not.toContainText('9007199254740992');
+});
+
+test('交会-三百一十位权重：检测成立且逐段展示精确权重与占比，不隐藏、不出现 Infinity', async ({ page }) => {
+  const w = '1' + '0'.repeat(309); // 10^309：310 位，超过 Number.MAX_VALUE（曾被解析成 Infinity）
+  const total = '1' + '0'.repeat(308) + '1'; // 10^309 + 1
+  await page.getByTestId('encounter-input').fill(corridorWeightedText([w, '1']));
+  await page.getByTestId('encounter-submit-btn').click();
+
+  // 检测仍可成立（首段占几乎全部总时长，错开走廊，全程安全）
+  await expect(page.getByTestId('encounter-safe-message')).toBeVisible();
+  // 页面不再隐藏该路线的分段耗时
+  await expect(page.getByTestId('a-seg-duration-0')).toBeVisible();
+  await expect(page.getByTestId('a-seg-duration-1')).toBeVisible();
+  await expect(page.getByTestId('a-seg-duration-0')).toHaveText(
+    `段#0 耗时 ${w}（占 ${w}/${total}）`,
+  );
+  await expect(page.getByTestId('a-seg-duration-1')).toHaveText(
+    `段#1 耗时 1（占 1/${total}）`,
+  );
+  await expect(page.getByTestId('encounter-view')).not.toContainText('Infinity');
+});
+
+test('交会-两段三百零九位权重：占比总量显示精确总和而非 Infinity', async ({ page }) => {
+  const w = '5' + '0'.repeat(308); // 5×10^308：309 位，两段等权 ⇒ 等价等时基线
+  const total = '1' + '0'.repeat(309); // 5×10^308 + 5×10^308 = 10^309（310 位精确总和）
+  await page.getByTestId('encounter-input').fill(corridorWeightedText([w, w]));
+  await page.getByTestId('encounter-submit-btn').click();
+
+  // 等权方案与等时基线一致，t=4/9 在 A 第 0 段相撞——证明超大权重下检测仍精确成立
+  await expect(page.getByTestId('encounter-t-value')).toHaveText('0.444444');
+  await expect(page.getByTestId('encounter-a-segment')).toHaveText('#0');
+  // 占比总量是两项权重的精确总和
+  await expect(page.getByTestId('a-seg-duration-0')).toHaveText(
+    `段#0 耗时 ${w}（占 ${w}/${total}）`,
+  );
+  await expect(page.getByTestId('a-seg-duration-1')).toHaveText(
+    `段#1 耗时 ${w}（占 ${w}/${total}）`,
+  );
+  await expect(page.getByTestId('encounter-view')).not.toContainText('Infinity');
 });

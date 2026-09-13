@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ApiRequestError, checkEncounter } from '../lib/api';
+import { parseJsonPreservingBigInts } from '../lib/json';
 import { ENCOUNTER_SAMPLE } from '../lib/encounterSample';
 import { EncounterView } from './EncounterView';
 import type { EncounterPayload, EncounterResult } from '../lib/types';
@@ -29,7 +30,9 @@ export function EncounterPanel() {
       const r = await checkEncounter(text);
       setResult(r);
       try {
-        setPayload(JSON.parse(text) as EncounterPayload);
+        // 保留超大整数字面量（duration_weights 可为三百位以上的正整数）：
+        // 不能用 JSON.parse，否则权重被浮点舍入或变成 Infinity
+        setPayload(parseJsonPreservingBigInts(text) as EncounterPayload);
       } catch {
         setPayload(null);
       }

@@ -1,26 +1,39 @@
+import { addDecimalInts } from './bigInt';
+import { asPositiveInt, type IntValue } from './json';
 import type { CheckResult, EncounterFly, StagePayload, StagePoint } from './types';
 
 /** 单套吊景的折线顶点（不依赖 zones/id）。 */
 export type FlyRoute = Pick<EncounterFly, 'start' | 'end' | 'waypoints'>;
 
-/** 各段相对耗时：weights 为每段权重，total 为权重总和（占比 = weights[i]/total）。 */
+/** 各段相对耗时：weights 为每段权重，total 为权重总和（占比 = weights[i]/total）。
+ *  超大权重以精确十进制字符串保存，total 亦为字符串，渲染时不经 Number。 */
 export interface SegmentDurations {
-  weights: number[];
-  total: number;
+  weights: IntValue[];
+  total: string;
 }
 
 /**
  * 读取吊景的各段相对耗时；未提供 duration_weights（或长度与段数不符，
  * 服务端会拒绝、此处防御性忽略）时返回 null —— 各段等时，页面不标注。
+ * 权重为正整数（number 或精确十进制字符串），总和按十进制字符串精确累加，
+ * 避免超大整数被浮点舍入或求和溢出为 Infinity。
  */
 export function segmentDurations(
-  fly: FlyRoute & { duration_weights?: number[] },
+  fly: FlyRoute & { duration_weights?: Array<number | string> },
 ): SegmentDurations | null {
-  const weights = fly.duration_weights;
-  if (!weights || weights.length === 0) return null;
-  if (weights.length !== flyRoutePoints(fly).length - 1) return null;
-  if (weights.some((w) => !Number.isInteger(w) || w < 1)) return null;
-  return { weights, total: weights.reduce((s, w) => s + w, 0) };
+  const raw = fly.duration_weights;
+  if (!raw || raw.length === 0) return null;
+  if (raw.length !== flyRoutePoints(fly).length - 1) return null;
+  const weights: IntValue[] = [];
+  for (const w of raw) {
+    const v = asPositiveInt(w);
+    if (v === null) return null;
+    weights.push(v);
+  }
+  const total = weights
+    .map((w) => (typeof w === 'number' ? String(w) : w))
+    .reduce((s, w) => addDecimalInts(s, w), '0');
+  return { weights, total };
 }
 
 /** 完整折线的顶点：start → 各中途停位 → end。 */

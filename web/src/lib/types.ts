@@ -45,8 +45,11 @@ export interface EncounterFly {
   start: StagePoint;
   end: StagePoint;
   waypoints?: StagePoint[];
-  /** 可选各路线段相对耗时（正整数数组，长度 = 段数）；缺省时各段等时。 */
-  duration_weights?: number[];
+  /**
+   * 可选各路线段相对耗时（正整数数组，长度 = 段数）；缺省时各段等时。
+   * 超过 Number 安全范围的超大权重以精确十进制字符串表示（见 lib/json）。
+   */
+  duration_weights?: Array<number | string>;
 }
 
 export interface EncounterPayload {

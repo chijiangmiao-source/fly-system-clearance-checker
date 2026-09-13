@@ -489,6 +489,29 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         check("enc weights zero request", False, repr(e))
 
+    # 8l) 超大权重仍按精确有理数处理，不因位数被拦截或溢出：
+    #     [2^53+1, 1]（16 位，末位超出双精度安全整数）首段极慢 → 全程安全
+    #     [10^309, 1]（310 位，超过 double MAX_VALUE）同样全程安全
+    #     [5×10^308, 5×10^308]（两个 309 位等权）等价等时基线 → t=4/9 仍在 A 第 0 段相撞
+    huge_cases = [
+        ("enc 16-digit weight safe", [2**53 + 1, 1], False, None),
+        ("enc 310-digit weight safe", [10**309, 1], False, None),
+        ("enc twin 309-digit weights hit", [5 * 10**308, 5 * 10**308], True, "4/9"),
+    ]
+    for name, weights, collides, t_fraction in huge_cases:
+        try:
+            r = httpx.post(f"{API}/api/encounter",
+                           json={"stage": {"width": 10000, "height": 10000},
+                                 "fly_a": {**corr_a, "duration_weights": weights},
+                                 "fly_b": corr_b}, timeout=10)
+            body = r.json()
+            ok = r.status_code == 200 and body.get("collides") is collides
+            if t_fraction is not None:
+                ok = ok and body.get("t_fraction") == t_fraction
+            check(name, ok, str(body)[:300])
+        except Exception as e:  # noqa: BLE001
+            check(f"{name} request", False, repr(e))
+
     # 9) Web 页面内容
     try:
         r = httpx.get(f"{WEB}/", timeout=5)
