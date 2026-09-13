@@ -12,15 +12,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .geometry import first_collision
-from .validation import FieldError, validate
+from .validation import FieldError, HugeInt, validate
 
 getcontext().prec = 60
 
-# CPython 默认限制整数字符串转换 ≤4300 位，超长整数字面量会让 json 解析
-# 抛出非 JSONDecodeError 的 ValueError（表现为 500）。放宽上限，使超长整数
-# 进入正常的字段级校验（如 stage.width 必须等于 10000），返回首个字段路径。
+# CPython 默认限制整数字符串转换 ≤4300 位。此处放宽以便测试与日志等
+# 附带转换；请求解析本身经 parse_int 钩子处理，不受位限影响。
 if hasattr(sys, "set_int_max_str_digits"):
     sys.set_int_max_str_digits(max(sys.get_int_max_str_digits(), 100_000))
+
+# 超过该位数的整数字面量不做精确转换（5M 位转换需分钟级），
+# 以 HugeInt 惰性标记代替，由字段级校验指出其所在字段路径。
+_JSON_INT_FAST_DIGITS = 4300
+
+
+def _parse_json_int(s: str):
+    if len(s) <= _JSON_INT_FAST_DIGITS:
+        return int(s)
+    return HugeInt(s)
 
 app = FastAPI(title="Stage Fly Collision API")
 app.add_middleware(
@@ -75,11 +84,11 @@ async def check(request: Request):
     if not raw:
         return _err(400, "", "request body is empty")
     try:
-        payload = json.loads(raw.decode("utf-8"))
+        payload = json.loads(raw.decode("utf-8"), parse_int=_parse_json_int)
     except UnicodeDecodeError:
         return _err(400, "", "request body is not valid UTF-8")
     except ValueError:
-        # 含 JSONDecodeError（语法错误）与超过放宽后上限的整数字面量
+        # JSON 语法错误（超长整数已由 parse_int 钩子绕过位限，不会走到这里）
         return _err(400, "", "request body is not valid JSON")
 
     try:

@@ -13,6 +13,52 @@ STAGE_SIZE = 10000
 _MISSING = object()
 
 
+class HugeInt:
+    """超过位限的整数字面量的惰性标记。
+
+    它仍是整数（JSON 中就是整数字面量），但不做昂贵的精确转换；
+    比较时视为同号无穷大 —— 任何合法取值范围都不包含它，
+    因此一定会在首个字段校验处被拦截并指出字段路径。
+    """
+
+    __slots__ = ("negative",)
+
+    def __init__(self, digits: str):
+        self.negative = digits.startswith("-")
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, HugeInt) and self.negative == other.negative
+
+    def __ne__(self, other: object) -> bool:
+        return not self.__eq__(other)
+
+    def __lt__(self, other: object) -> bool:
+        return self.negative
+
+    def __le__(self, other: object) -> bool:
+        return self.negative
+
+    def __gt__(self, other: object) -> bool:
+        return not self.negative
+
+    def __ge__(self, other: object) -> bool:
+        return not self.negative
+
+    def __add__(self, other: object) -> "HugeInt":
+        return self
+
+    __radd__ = __add__
+
+    def __sub__(self, other: object) -> "HugeInt":
+        return self
+
+    def __rsub__(self, other: object) -> "HugeInt":
+        return HugeInt("-" if not self.negative else "")
+
+    def __hash__(self) -> int:
+        return hash(("HugeInt", self.negative))
+
+
 class FieldError(Exception):
     def __init__(self, path: str, message: str):
         super().__init__(message)
@@ -21,8 +67,11 @@ class FieldError(Exception):
 
 
 def _is_int(v: object) -> bool:
-    # JSON true/false 在 Python 中是 bool（int 子类），必须排除
-    return isinstance(v, int) and not isinstance(v, bool)
+    # JSON true/false 在 Python 中是 bool（int 子类），必须排除；
+    # HugeInt 是超长整数字面量的标记，同样属于整数
+    if isinstance(v, bool):
+        return False
+    return isinstance(v, (int, HugeInt))
 
 
 def _required(obj: dict, key: str, path: str):

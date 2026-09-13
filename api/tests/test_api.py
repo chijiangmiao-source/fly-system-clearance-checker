@@ -310,7 +310,8 @@ class TestExtremelyLongIntegers:
         assert code == 400
         assert body["error"]["path"] == "zones.0.vertices.0.x"
 
-    def test_beyond_relaxed_limit_returns_400_not_500(self):
+    def test_beyond_relaxed_limit_still_points_to_field(self):
+        # 超过十万位也不再做整体拒绝：parse_int 钩子惰性化后照常定位字段
         big = "1" * 200_000
         text = (
             '{"stage":{"width":%s,"height":10000},'
@@ -319,4 +320,32 @@ class TestExtremelyLongIntegers:
         )
         code, body = post(text)
         assert code == 400
-        assert body["error"]["path"] == ""
+        assert body["error"]["path"] == "stage.width"
+
+    def test_million_digit_integer_fast_and_located(self):
+        # 百万位整数：解析不做精确转换，应迅速返回且定位到字段
+        import time
+
+        big = "7" * 1_000_000
+        text = (
+            '{"stage":{"width":10000,"height":10000},'
+            '"fly":{"width":1000,"height":1000,"start":{"x":0,"y":0},"end":{"x":1000,"y":0}},'
+            '"zones":[{"id":"A","vertices":[{"x":%s,"y":0},{"x":10,"y":0},{"x":0,"y":10}]}]}' % big
+        )
+        t0 = time.perf_counter()
+        code, body = post(text)
+        elapsed = time.perf_counter() - t0
+        assert code == 400
+        assert body["error"]["path"] == "zones.0.vertices.0.x"
+        assert elapsed < 5
+
+    def test_negative_long_integer(self):
+        big = "-" + "9" * 5000
+        text = (
+            '{"stage":{"width":10000,"height":10000},'
+            '"fly":{"width":1000,"height":1000,"start":{"x":%s,"y":0},"end":{"x":1000,"y":0}},'
+            '"zones":[]}' % big
+        )
+        code, body = post(text)
+        assert code == 400
+        assert body["error"]["path"] == "fly.start.x"

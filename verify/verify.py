@@ -108,6 +108,25 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         check("long integer request", False, repr(e))
 
+    # 5b) 超十万位整数 → 同样精确到 stage.width（惰性解析，不得整份拒绝）
+    huge = "8" * 200_000
+    huge_int_text = (
+        '{"stage":{"width":' + huge + ',"height":10000},'
+        '"fly":{"width":1000,"height":1000,"start":{"x":0,"y":0},"end":{"x":1000,"y":0}},'
+        '"zones":[]}'
+    )
+    try:
+        r = httpx.post(
+            f"{API}/api/check",
+            content=huge_int_text.encode("utf-8"),
+            headers={"Content-Type": "application/json; charset=utf-8"},
+            timeout=10,
+        )
+        check("huge integer 400", r.status_code == 400, str(r.status_code))
+        check("huge integer path", r.json().get("error", {}).get("path") == "stage.width", r.text[:200])
+    except Exception as e:  # noqa: BLE001
+        check("huge integer request", False, repr(e))
+
     # 6) Web 页面内容
     try:
         r = httpx.get(f"{WEB}/", timeout=5)
