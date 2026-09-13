@@ -1,0 +1,10 @@
+{
+  "stage": { "width": 10000, "height": 10000 },
+  "fly": {
+    "width": 1000,
+    "height": 1000,
+    "start": { "y": 500 },
+    "end": { "x": 9000, "y": 500 }
+  },
+  "zones": []
+}
