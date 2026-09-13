@@ -127,7 +127,105 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         check("huge integer request", False, repr(e))
 
-    # 6) Web 页面内容
+    # 6a) 折线路线：第二段首次碰撞稳定定位
+    #    start (0,3000) → 停位 (5000,3000) → end (9000,3000)；
+    #    区左缘 x=7000：第二段段内 t=1/4，全程等时 t=(1+1/4)/2=5/8，命中 (6000,3000)
+    seg_zone = {"id": "A", "vertices": [
+        {"x": 7000, "y": 2500}, {"x": 9000, "y": 2500},
+        {"x": 9000, "y": 3500}, {"x": 7000, "y": 3500}]}
+    seg2 = {"stage": {"width": 10000, "height": 10000},
+            "fly": {"width": 1000, "height": 1000,
+                    "start": {"x": 0, "y": 3000},
+                    "waypoints": [{"x": 5000, "y": 3000}],
+                    "end": {"x": 9000, "y": 3000}},
+            "zones": [seg_zone]}
+    try:
+        r = httpx.post(f"{API}/api/check", json=seg2, timeout=5)
+        body = r.json()
+        check("seg2 status 200", r.status_code == 200, str(r.status_code))
+        check("seg2 global t", body.get("t_fraction") == "5/8", str(body))
+        check("seg2 segment_index", body.get("segment_index") == 1, str(body))
+        check("seg2 segment_t_display", body.get("segment_t_display") == "0.250000", str(body))
+        check("seg2 position", body.get("position_display") == {"x": "6000", "y": "3000"}, str(body))
+    except Exception as e:  # noqa: BLE001
+        check("seg2 request", False, repr(e))
+
+    # 6b) 折点两侧同时命中 → 归前段（segment_index=0，段内 t=1）
+    vertex = {"stage": {"width": 10000, "height": 10000},
+              "fly": {"width": 1000, "height": 1000,
+                      "start": {"x": 0, "y": 0},
+                      "waypoints": [{"x": 4000, "y": 4000}],
+                      "end": {"x": 0, "y": 8000}},
+              "zones": [{"id": "B", "vertices": [
+                  {"x": 3000, "y": 5000}, {"x": 4000, "y": 5000},
+                  {"x": 4000, "y": 6000}, {"x": 3000, "y": 6000}]}]}
+    try:
+        r = httpx.post(f"{API}/api/check", json=vertex, timeout=5)
+        body = r.json()
+        check("vertex status 200", r.status_code == 200, str(r.status_code))
+        check("vertex earlier segment", body.get("segment_index") == 0, str(body))
+        check("vertex global t half", body.get("t_fraction") == "1/2", str(body))
+        check("vertex segment t one", body.get("segment_t_display") == "1.000000", str(body))
+        check("vertex position", body.get("position_display") == {"x": "4000", "y": "4000"}, str(body))
+    except Exception as e:  # noqa: BLE001
+        check("vertex request", False, repr(e))
+
+    # 6c) 多段安全路线 → collides False
+    multi_safe = {"stage": {"width": 10000, "height": 10000},
+                  "fly": {"width": 1000, "height": 1000,
+                          "start": {"x": 0, "y": 8000},
+                          "waypoints": [{"x": 5000, "y": 3000}],
+                          "end": {"x": 9000, "y": 8000}},
+                  "zones": [seg_zone]}
+    try:
+        r = httpx.post(f"{API}/api/check", json=multi_safe, timeout=5)
+        body = r.json()
+        check("multi-safe no collision", r.status_code == 200 and body.get("collides") is False, r.text[:200])
+        check("multi-safe no segment", body.get("segment_index") is None, str(body))
+    except Exception as e:  # noqa: BLE001
+        check("multi-safe request", False, repr(e))
+
+    # 6d) 停位越界 → 400 + fly.waypoints.0.x
+    wb = {"stage": {"width": 10000, "height": 10000},
+          "fly": {"width": 1000, "height": 1000,
+                  "start": {"x": 0, "y": 0},
+                  "waypoints": [{"x": 9001, "y": 0}],
+                  "end": {"x": 9000, "y": 9000}},
+          "zones": []}
+    try:
+        r = httpx.post(f"{API}/api/check", json=wb, timeout=5)
+        check("waypoint oob 400", r.status_code == 400, str(r.status_code))
+        check("waypoint oob path", r.json().get("error", {}).get("path") == "fly.waypoints.0.x", r.text[:200])
+    except Exception as e:  # noqa: BLE001
+        check("waypoint oob request", False, repr(e))
+
+    # 6e) 相邻停位重复 → 400 + 具体下标与坐标
+    wd = {"stage": {"width": 10000, "height": 10000},
+          "fly": {"width": 1000, "height": 1000,
+                  "start": {"x": 0, "y": 0},
+                  "waypoints": [{"x": 5000, "y": 5000}, {"x": 5000, "y": 5000}],
+                  "end": {"x": 9000, "y": 9000}},
+          "zones": []}
+    try:
+        r = httpx.post(f"{API}/api/check", json=wd, timeout=5)
+        err = r.json().get("error", {})
+        check("waypoint dup 400", r.status_code == 400, str(r.status_code))
+        check("waypoint dup path", err.get("path") == "fly.waypoints.1", r.text[:200])
+        check("waypoint dup coords", "(5000, 5000)" in err.get("message", ""), str(err))
+    except Exception as e:  # noqa: BLE001
+        check("waypoint dup request", False, repr(e))
+
+    # 6f) 不含 waypoints 的既有请求不回归：新字段 segment_index=0、segment_t_display=t_display
+    try:
+        r = httpx.post(f"{API}/api/check", json=collision, timeout=5)
+        body = r.json()
+        check("legacy segment_index", body.get("segment_index") == 0, str(body))
+        check("legacy segment_t_display",
+              body.get("segment_t_display") == body.get("t_display") == "0.333333", str(body))
+    except Exception as e:  # noqa: BLE001
+        check("legacy request", False, repr(e))
+
+    # 7) Web 页面内容
     try:
         r = httpx.get(f"{WEB}/", timeout=5)
         check("web html", r.status_code == 200 and '<div id="root">' in r.text, r.text[:120])

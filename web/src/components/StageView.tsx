@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { formatMm } from '../lib/format';
+import { routePoints, splitRouteAtHit, toPointsAttr } from '../lib/route';
 import type { CheckResult, StagePayload } from '../lib/types';
 
 const STAGE = 10000;
@@ -25,9 +26,11 @@ export function StageView({ payload, result }: Props) {
   const drag = useRef<{ px: number; py: number } | null>(null);
 
   const { fly } = payload;
+  const waypoints = fly.waypoints ?? [];
   const collides = result.collides && result.position != null;
   const cx = result.position?.x ?? 0;
   const cy = result.position?.y ?? 0;
+  const split = splitRouteAtHit(payload, result);
   const responsibleZone =
     collides && result.zone_index != null ? payload.zones[result.zone_index] : undefined;
   const edgeIndex = result.edge_index ?? -1;
@@ -63,6 +66,7 @@ export function StageView({ payload, result }: Props) {
 
   const font = view.w * 0.016;
   const fontSmall = view.w * 0.013;
+  const strokeW = view.w * 0.0022;
 
   return (
     <div className="stage-view-wrap">
@@ -134,40 +138,59 @@ export function StageView({ payload, result }: Props) {
           );
         })}
 
-        {/* 完整路径：无碰撞全绿；有碰撞则起点→碰撞点绿、碰撞点→终点红 */}
-        {collides ? (
+        {/* 完整折线路径：无碰撞全绿；有碰撞则起点→命中点绿、命中点→终点红 */}
+        {split ? (
           <g>
-            <line
-              x1={fly.start.x}
-              y1={Y(fly.start.y)}
-              x2={cx}
-              y2={Y(cy)}
+            <polyline
+              points={toPointsAttr(split.safe, Y)}
+              fill="none"
               stroke="#27ae60"
-              strokeWidth={view.w * 0.0022}
+              strokeWidth={strokeW}
               data-testid="path-safe"
             />
-            <line
-              x1={cx}
-              y1={Y(cy)}
-              x2={fly.end.x}
-              y2={Y(fly.end.y)}
+            <polyline
+              points={toPointsAttr(split.danger, Y)}
+              fill="none"
               stroke="#e74c3c"
-              strokeWidth={view.w * 0.0022}
+              strokeWidth={strokeW}
               strokeDasharray={`${view.w * 0.008} ${view.w * 0.006}`}
               data-testid="path-danger"
             />
           </g>
         ) : (
-          <line
-            x1={fly.start.x}
-            y1={Y(fly.start.y)}
-            x2={fly.end.x}
-            y2={Y(fly.end.y)}
+          <polyline
+            points={toPointsAttr(routePoints(payload), Y)}
+            fill="none"
             stroke="#27ae60"
-            strokeWidth={view.w * 0.0022}
+            strokeWidth={strokeW}
             data-testid="path-safe"
           />
         )}
+
+        {/* 中途停位姿态 */}
+        {waypoints.map((wp, i) => (
+          <g key={i} data-testid={`waypoint-pose-${i}`}>
+            <rect
+              x={wp.x}
+              y={Y(wp.y + fly.height)}
+              width={fly.width}
+              height={fly.height}
+              fill="rgba(142, 68, 173, 0.08)"
+              stroke="#8e44ad"
+              strokeWidth={view.w * 0.0016}
+              strokeDasharray={`${view.w * 0.006} ${view.w * 0.004}`}
+            />
+            <circle cx={wp.x} cy={Y(wp.y)} r={view.w * 0.0032} fill="#8e44ad" />
+            <text
+              x={wp.x}
+              y={Y(wp.y + fly.height) - fontSmall * 0.4}
+              fontSize={fontSmall}
+              fill="#8e44ad"
+            >
+              停位 {i + 1} ({formatMm(wp.x)}, {formatMm(wp.y)}) mm
+            </text>
+          </g>
+        ))}
 
         {/* 起终姿态 */}
         <g data-testid="start-pose">
@@ -215,7 +238,8 @@ export function StageView({ payload, result }: Props) {
             />
             <circle cx={cx} cy={Y(cy)} r={view.w * 0.004} fill="#e74c3c" />
             <text x={cx} y={Y(cy) + font * 1.2} fontSize={font} fill="#e74c3c">
-              首次碰撞 t={result.t_display} ({result.position_display?.x},{' '}
+              首次碰撞：第 {(result.segment_index ?? 0) + 1} 段 · 段内 t=
+              {result.segment_t_display} · 全程 t={result.t_display} ({result.position_display?.x},{' '}
               {result.position_display?.y}) mm
             </text>
           </g>

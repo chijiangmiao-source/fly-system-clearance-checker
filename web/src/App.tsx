@@ -53,7 +53,7 @@ export default function App() {
     <div className="app">
       <header>
         <h1>舞台吊景越界彩排检测</h1>
-        <p>矩形吊景沿直线升降，连续扫掠判定首次擦碰禁入区的位置（t∈[0,1]）</p>
+        <p>矩形吊景沿路线连续扫掠，判定首次擦碰禁入区的位置（t∈[0,1]）；可在 fly.waypoints 中填写中途停位组成折线</p>
       </header>
       <main>
         <section className="panel">
@@ -96,6 +96,11 @@ export default function App() {
                   <div>
                     首次越界时刻 t ={' '}
                     <strong data-testid="t-value">{result.t_display}</strong>
+                  </div>
+                  <div>
+                    命中段号：<strong data-testid="segment-value">#{result.segment_index}</strong>
+                    （段内 t ={' '}
+                    <strong data-testid="segment-t-value">{result.segment_t_display}</strong>）
                   </div>
                   <div>
                     责任禁入区：<strong data-testid="zone-value">{result.zone_id}</strong>

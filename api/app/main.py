@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from .geometry import first_collision
+from .geometry import first_collision_segmented
 from .validation import FieldError, HugeInt, validate
 
 getcontext().prec = 60
@@ -47,6 +47,8 @@ _EMPTY_RESULT = {
     "zone_id": None,
     "zone_index": None,
     "edge_index": None,
+    "segment_index": None,
+    "segment_t_display": None,
     "position": None,
     "position_display": None,
 }
@@ -96,17 +98,17 @@ async def check(request: Request):
     except FieldError as e:
         return _err(400, e.path, e.message)
 
-    result = first_collision(data["fly"], data["zones"])
+    result = first_collision_segmented(data["fly"], data["zones"])
     if result is None:
         return _EMPTY_RESULT
 
-    t, zone_id, edge_index, zone_index = result
+    t, segment_index, local_t, zone_id, edge_index, zone_index = result
     fly = data["fly"]
-    sx, sy = fly["start"]["x"], fly["start"]["y"]
-    dx = fly["end"]["x"] - sx
-    dy = fly["end"]["y"] - sy
-    px = sx + t * dx
-    py = sy + t * dy
+    route = [fly["start"], *(fly.get("waypoints") or []), fly["end"]]
+    p0 = route[segment_index]
+    p1 = route[segment_index + 1]
+    px = p0["x"] + local_t * (p1["x"] - p0["x"])
+    py = p0["y"] + local_t * (p1["y"] - p0["y"])
     return {
         "collides": True,
         "t": float(t),
@@ -115,6 +117,8 @@ async def check(request: Request):
         "zone_id": zone_id,
         "zone_index": zone_index,
         "edge_index": edge_index,
+        "segment_index": segment_index,
+        "segment_t_display": _t_display(local_t),
         "position": {"x": float(px), "y": float(py)},
         "position_display": {"x": _coord_display(px), "y": _coord_display(py)},
     }

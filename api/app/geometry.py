@@ -216,3 +216,43 @@ def first_collision(
         if best is None or cand[:3] < best[:3]:
             best = cand
     return best
+
+
+def first_collision_segmented(
+    fly: dict, zones: Sequence[dict]
+) -> Optional[Tuple[Fraction, int, Fraction, str, int, int]]:
+    """折线路线（start → waypoints… → end）的全局首次碰撞。
+
+    每段复用单段连续扫掠；各段等时，全程 t = (段序 + 段内 t) / 段数。
+    汇总决胜：先比全程 t，再比段序 —— 折点两侧同时命中
+    （前段段内 t=1 与后段段内 t=0）归前一段。
+
+    返回 (全程 t, 段序, 段内 t, zone_id, edge_index, zone_index)；无碰撞 None。
+    """
+    w = fly["width"]
+    h = fly["height"]
+    points: list[Point] = [(fly["start"]["x"], fly["start"]["y"])]
+    for wp in fly.get("waypoints") or []:
+        points.append((wp["x"], wp["y"]) if isinstance(wp, dict) else wp)
+    points.append((fly["end"]["x"], fly["end"]["y"]))
+    n = len(points) - 1
+
+    best: Optional[Tuple[Fraction, int, Fraction, str, int, int]] = None
+    for i in range(n):
+        seg = {
+            "width": w,
+            "height": h,
+            "start": {"x": points[i][0], "y": points[i][1]},
+            "end": {"x": points[i + 1][0], "y": points[i + 1][1]},
+        }
+        got = first_collision(seg, zones)
+        if got is None:
+            continue
+        local_t, zone_id, edge_index, zone_index = got
+        global_t = Fraction(i, n) + local_t / n
+        cand = (global_t, i, local_t, zone_id, edge_index, zone_index)
+        if best is None or cand[0] < best[0] or (
+            cand[0] == best[0] and cand[1] < best[1]
+        ):
+            best = cand
+    return best

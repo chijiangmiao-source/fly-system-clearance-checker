@@ -158,6 +158,41 @@ def validate(payload: object) -> dict:
             raise FieldError(f"fly.{corner}.y", "fly must stay within the stage")
         corners[corner] = {"x": x, "y": y}
 
+    # 可选中途停位：按 start → 各停位 → end 组成折线路线
+    waypoints: list[dict] | None = None
+    if "waypoints" in fly:
+        wps_raw = fly["waypoints"]
+        if not isinstance(wps_raw, list):
+            raise FieldError("fly.waypoints", "must be an array")
+        waypoints = []
+        prev = corners["start"]
+        for i, wp in enumerate(wps_raw):
+            wpath = f"fly.waypoints.{i}"
+            if not isinstance(wp, dict):
+                raise FieldError(wpath, "must be an object")
+            x = _int_field(wp, "x", f"{wpath}.x")
+            if x < 0 or x + fw > STAGE_SIZE:
+                raise FieldError(f"{wpath}.x", "fly must stay within the stage")
+            y = _int_field(wp, "y", f"{wpath}.y")
+            if y < 0 or y + fh > STAGE_SIZE:
+                raise FieldError(f"{wpath}.y", "fly must stay within the stage")
+            pt = {"x": x, "y": y}
+            # 相邻重复点（含与起点重合），错误定位到后一个停位的下标与坐标
+            if pt == prev:
+                raise FieldError(
+                    wpath, f"duplicate adjacent waypoint at ({x}, {y})"
+                )
+            waypoints.append(pt)
+            prev = pt
+        # 末停位与终点重合同样拒绝，仍定位到该停位下标
+        if waypoints and waypoints[-1] == corners["end"]:
+            x = waypoints[-1]["x"]
+            y = waypoints[-1]["y"]
+            k = len(waypoints) - 1
+            raise FieldError(
+                f"fly.waypoints.{k}", f"duplicate adjacent waypoint at ({x}, {y})"
+            )
+
     zones_raw = _required(payload, "zones", "zones")
     if not isinstance(zones_raw, list):
         raise FieldError("zones", "must be an array")
@@ -196,6 +231,7 @@ def validate(payload: object) -> dict:
             "height": fh,
             "start": corners["start"],
             "end": corners["end"],
+            "waypoints": waypoints,
         },
         "zones": zones,
     }
