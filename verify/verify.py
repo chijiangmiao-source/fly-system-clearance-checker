@@ -89,7 +89,26 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         check("self-intersect request", False, repr(e))
 
-    # 5) Web 页面内容
+    # 5) 超长整数（>4300 位）→ 400 + stage.width，不得 500
+    big = "9" * 5000
+    long_int_text = (
+        '{"stage":{"width":' + big + ',"height":10000},'
+        '"fly":{"width":1000,"height":1000,"start":{"x":0,"y":0},"end":{"x":1000,"y":0}},'
+        '"zones":[]}'
+    )
+    try:
+        r = httpx.post(
+            f"{API}/api/check",
+            content=long_int_text.encode("utf-8"),
+            headers={"Content-Type": "application/json; charset=utf-8"},
+            timeout=5,
+        )
+        check("long integer 400", r.status_code == 400, str(r.status_code))
+        check("long integer path", r.json().get("error", {}).get("path") == "stage.width", r.text[:200])
+    except Exception as e:  # noqa: BLE001
+        check("long integer request", False, repr(e))
+
+    # 6) Web 页面内容
     try:
         r = httpx.get(f"{WEB}/", timeout=5)
         check("web html", r.status_code == 200 and '<div id="root">' in r.text, r.text[:120])

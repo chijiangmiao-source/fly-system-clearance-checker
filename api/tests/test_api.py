@@ -261,3 +261,62 @@ class TestValidationErrors:
         assert code == 400
         assert set(body.keys()) == {"error"}
         assert set(body["error"].keys()) == {"path", "message"}
+
+
+class TestExtremelyLongIntegers:
+    """超长整数（超过 CPython 默认 4300 位转换上限）不得导致 500。"""
+
+    def test_stage_width_long_integer(self):
+        big = "9" * 5000
+        text = (
+            '{"stage":{"width":%s,"height":10000},'
+            '"fly":{"width":1000,"height":1000,"start":{"x":0,"y":0},"end":{"x":1000,"y":0}},'
+            '"zones":[]}' % big
+        )
+        code, body = post(text)
+        assert code == 400
+        assert body["error"]["path"] == "stage.width"
+
+    def test_stage_height_long_integer(self):
+        big = "9" * 6000
+        text = (
+            '{"stage":{"width":10000,"height":%s},'
+            '"fly":{"width":1000,"height":1000,"start":{"x":0,"y":0},"end":{"x":1000,"y":0}},'
+            '"zones":[]}' % big
+        )
+        code, body = post(text)
+        assert code == 400
+        assert body["error"]["path"] == "stage.height"
+
+    def test_fly_coordinate_long_integer(self):
+        p = payload()
+        p["fly"]["start"]["x"] = int("8" * 5000)
+        code, body = post(p)
+        assert code == 400
+        assert body["error"]["path"] == "fly.start.x"
+
+    def test_fly_width_long_integer(self):
+        # 宽度本身为正整数，但无法容纳于台口 → 越界报在首个坐标字段
+        p = payload()
+        p["fly"]["width"] = int("9" * 5000)
+        code, body = post(p)
+        assert code == 400
+        assert body["error"]["path"] == "fly.start.x"
+
+    def test_zone_vertex_long_integer(self):
+        p = payload()
+        p["zones"][0]["vertices"][0]["x"] = int("7" * 5000)
+        code, body = post(p)
+        assert code == 400
+        assert body["error"]["path"] == "zones.0.vertices.0.x"
+
+    def test_beyond_relaxed_limit_returns_400_not_500(self):
+        big = "1" * 200_000
+        text = (
+            '{"stage":{"width":%s,"height":10000},'
+            '"fly":{"width":1000,"height":1000,"start":{"x":0,"y":0},"end":{"x":1000,"y":0}},'
+            '"zones":[]}' % big
+        )
+        code, body = post(text)
+        assert code == 400
+        assert body["error"]["path"] == ""

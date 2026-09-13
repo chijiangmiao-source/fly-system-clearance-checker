@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from decimal import ROUND_HALF_UP, Decimal, getcontext
 from fractions import Fraction
 
@@ -14,6 +15,12 @@ from .geometry import first_collision
 from .validation import FieldError, validate
 
 getcontext().prec = 60
+
+# CPython 默认限制整数字符串转换 ≤4300 位，超长整数字面量会让 json 解析
+# 抛出非 JSONDecodeError 的 ValueError（表现为 500）。放宽上限，使超长整数
+# 进入正常的字段级校验（如 stage.width 必须等于 10000），返回首个字段路径。
+if hasattr(sys, "set_int_max_str_digits"):
+    sys.set_int_max_str_digits(max(sys.get_int_max_str_digits(), 100_000))
 
 app = FastAPI(title="Stage Fly Collision API")
 app.add_middleware(
@@ -69,8 +76,11 @@ async def check(request: Request):
         return _err(400, "", "request body is empty")
     try:
         payload = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return _err(400, "", "request body is not valid UTF-8 JSON")
+    except UnicodeDecodeError:
+        return _err(400, "", "request body is not valid UTF-8")
+    except ValueError:
+        # 含 JSONDecodeError（语法错误）与超过放宽后上限的整数字面量
+        return _err(400, "", "request body is not valid JSON")
 
     try:
         data = validate(payload)
