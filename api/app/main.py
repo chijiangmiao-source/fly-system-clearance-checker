@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .encounter import encounter_first_contact
-from .geometry import first_collision_segmented
+from .geometry import WINDOW_TICKS, first_collision_segmented
 from .validation import FieldError, HugeInt, validate, validate_encounter
 
 getcontext().prec = 60
@@ -58,6 +58,8 @@ _EMPTY_RESULT = {
     "segment_t_display": None,
     "position": None,
     "position_display": None,
+    "active_window": None,
+    "active_window_display": None,
 }
 
 
@@ -103,6 +105,11 @@ def _coord_display(f: Fraction) -> str:
     return format(q.normalize(), "f")
 
 
+def _tick_display(tick: int) -> str:
+    """启用窗口刻度（全程百万分之一）的展示值：换算到 t 轴，half-up 六位。"""
+    return _t_display(Fraction(tick, WINDOW_TICKS))
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok"}
@@ -131,6 +138,17 @@ async def check(request: Request):
     p1 = route[segment_index + 1]
     px = p0["x"] + local_t * (p1["x"] - p0["x"])
     py = p0["y"] + local_t * (p1["y"] - p0["y"])
+    # 命中禁入区的启用窗口（未填写窗口的区视为全程生效，此处回显 null）
+    aw = data["zones"][zone_index]["active_window"]
+    if aw is None:
+        window = None
+        window_display = None
+    else:
+        window = {"start_tick": aw["start_tick"], "end_tick": aw["end_tick"]}
+        window_display = {
+            "start": _tick_display(aw["start_tick"]),
+            "end": _tick_display(aw["end_tick"]),
+        }
     return {
         "collides": True,
         "t": float(t),
@@ -143,6 +161,8 @@ async def check(request: Request):
         "segment_t_display": _t_display(local_t),
         "position": {"x": float(px), "y": float(py)},
         "position_display": {"x": _coord_display(px), "y": _coord_display(py)},
+        "active_window": window,
+        "active_window_display": window_display,
     }
 
 

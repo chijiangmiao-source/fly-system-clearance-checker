@@ -150,6 +150,170 @@ const WAYPOINT_DUP = JSON.stringify({
   zones: [],
 });
 
+// 启用窗口折线：第一段穿过未启用区 A（窗口仅覆盖后半程），第二段命中启用区 B
+const WINDOW_ROUTE = JSON.stringify({
+  stage: { width: 10000, height: 10000 },
+  fly: {
+    width: 1000,
+    height: 1000,
+    start: { x: 0, y: 3000 },
+    waypoints: [{ x: 5000, y: 3000 }],
+    end: { x: 9000, y: 3000 },
+  },
+  zones: [
+    {
+      id: 'A',
+      vertices: [
+        { x: 1500, y: 2500 },
+        { x: 2500, y: 2500 },
+        { x: 2500, y: 3500 },
+        { x: 1500, y: 3500 },
+      ],
+      active_window: { start_tick: 500000, end_tick: 1000000 },
+    },
+    {
+      id: 'B',
+      vertices: [
+        { x: 7000, y: 2500 },
+        { x: 9000, y: 2500 },
+        { x: 9000, y: 3500 },
+        { x: 7000, y: 3500 },
+      ],
+      active_window: { start_tick: 600000, end_tick: 800000 },
+    },
+  ],
+});
+
+// 相同几何路线：A、B 窗口均错开接触区间 → 全程安全
+const WINDOW_SAFE = JSON.stringify({
+  stage: { width: 10000, height: 10000 },
+  fly: {
+    width: 1000,
+    height: 1000,
+    start: { x: 0, y: 3000 },
+    waypoints: [{ x: 5000, y: 3000 }],
+    end: { x: 9000, y: 3000 },
+  },
+  zones: [
+    {
+      id: 'A',
+      vertices: [
+        { x: 1500, y: 2500 },
+        { x: 2500, y: 2500 },
+        { x: 2500, y: 3500 },
+        { x: 1500, y: 3500 },
+      ],
+      active_window: { start_tick: 500000, end_tick: 1000000 },
+    },
+    {
+      id: 'B',
+      vertices: [
+        { x: 7000, y: 2500 },
+        { x: 9000, y: 2500 },
+        { x: 9000, y: 3500 },
+        { x: 7000, y: 3500 },
+      ],
+      active_window: { start_tick: 0, end_tick: 600000 },
+    },
+  ],
+});
+
+// 窗口起点大于终点（顺序错误）
+const WINDOW_BAD_ORDER = JSON.stringify({
+  stage: { width: 10000, height: 10000 },
+  fly: { width: 1000, height: 1000, start: { x: 0, y: 500 }, end: { x: 9000, y: 500 } },
+  zones: [
+    {
+      id: 'A',
+      vertices: [
+        { x: 4000, y: 0 },
+        { x: 6000, y: 0 },
+        { x: 6000, y: 2000 },
+        { x: 4000, y: 2000 },
+      ],
+      active_window: { start_tick: 700000, end_tick: 300000 },
+    },
+  ],
+});
+
+// 窗口刻度越界（end_tick > 1000000）
+const WINDOW_BAD_RANGE = JSON.stringify({
+  stage: { width: 10000, height: 10000 },
+  fly: { width: 1000, height: 1000, start: { x: 0, y: 500 }, end: { x: 9000, y: 500 } },
+  zones: [
+    {
+      id: 'A',
+      vertices: [
+        { x: 4000, y: 0 },
+        { x: 6000, y: 0 },
+        { x: 6000, y: 2000 },
+        { x: 4000, y: 2000 },
+      ],
+      active_window: { start_tick: 0, end_tick: 1000001 },
+    },
+  ],
+});
+
+test('启用窗口：先穿过未启用区、随后命中启用区，区旁标注生效区间', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('payload-input').fill(WINDOW_ROUTE);
+  await page.getByTestId('submit-btn').click();
+
+  // 命中启用区 B（全程 t=5/8，第二段段内 t=1/4），结果补充命中窗口
+  await expect(page.getByTestId('t-value')).toHaveText('0.625000');
+  await expect(page.getByTestId('zone-value')).toHaveText('B');
+  await expect(page.getByTestId('segment-value')).toHaveText('#1');
+  await expect(page.getByTestId('window-value')).toHaveText('[0.600000, 0.800000]');
+  await expect(page.getByTestId('pos-value')).toContainText('(6000, 3000) mm');
+
+  // 禁入区旁标注生效区间
+  await expect(page.getByTestId('zone-window-A')).toHaveText('生效 [0.500000, 1.000000]');
+  await expect(page.getByTestId('zone-window-B')).toHaveText('生效 [0.600000, 0.800000]');
+
+  // 命中点把折线切成绿/红两段
+  await expect(page.getByTestId('path-safe')).toHaveCount(1);
+  await expect(page.getByTestId('path-danger')).toHaveCount(1);
+});
+
+test('启用窗口：路线仅穿过未启用区域时仍显示全绿', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('payload-input').fill(WINDOW_SAFE);
+  await page.getByTestId('submit-btn').click();
+
+  await expect(page.getByTestId('safe-message')).toBeVisible();
+  await expect(page.getByTestId('path-safe')).toHaveCount(1);
+  await expect(page.getByTestId('path-danger')).toHaveCount(0);
+  await expect(page.getByTestId('collision-pose')).toHaveCount(0);
+  // 未启用区域仍绘制并标注生效区间
+  await expect(page.getByTestId('zone-window-A')).toHaveText('生效 [0.500000, 1.000000]');
+  await expect(page.getByTestId('zone-window-B')).toHaveText('生效 [0.000000, 0.600000]');
+});
+
+test('启用窗口顺序错误：定位到 zones 下标内字段，保留原文并清除旧图', async ({ page }) => {
+  await page.goto('/');
+  // 先成功绘制一次
+  await page.getByTestId('payload-input').fill(COLLISION);
+  await page.getByTestId('submit-btn').click();
+  await expect(page.getByTestId('collision-pose')).toBeVisible();
+
+  await page.getByTestId('payload-input').fill(WINDOW_BAD_ORDER);
+  await page.getByTestId('submit-btn').click();
+  await expect(page.getByTestId('error-banner')).toBeVisible();
+  await expect(page.getByTestId('error-path')).toHaveText('zones.0.active_window.end_tick');
+  await expect(page.getByTestId('payload-input')).toHaveValue(WINDOW_BAD_ORDER);
+  await expect(page.getByTestId('stage-view')).toHaveCount(0);
+  await expect(page.getByTestId('result-panel')).toHaveCount(0);
+});
+
+test('启用窗口刻度越界：定位到 zones 下标内字段', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('payload-input').fill(WINDOW_BAD_RANGE);
+  await page.getByTestId('submit-btn').click();
+  await expect(page.getByTestId('error-path')).toHaveText('zones.0.active_window.end_tick');
+  await expect(page.getByTestId('payload-input')).toHaveValue(WINDOW_BAD_RANGE);
+  await expect(page.getByTestId('stage-view')).toHaveCount(0);
+});
+
 test('碰撞场景：展示 t、责任区、责任边与碰撞姿态', async ({ page }) => {
   await page.goto('/');
   await page.getByTestId('payload-input').fill(COLLISION);

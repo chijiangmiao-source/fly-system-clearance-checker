@@ -12,6 +12,10 @@ export interface CheckResult {
   segment_t_display: string | null;
   position: { x: number; y: number } | null;
   position_display: { x: string; y: string } | null;
+  /** 命中禁入区填写的启用窗口（全程百万分之一刻度起止整数）；未填窗口或无碰撞为 null。 */
+  active_window: ActiveWindow | null;
+  /** 命中窗口起止换算到 t 轴的展示值（half-up 六位）。 */
+  active_window_display: { start: string; end: string } | null;
 }
 
 export interface StagePoint {
@@ -19,9 +23,17 @@ export interface StagePoint {
   y: number;
 }
 
+/** 禁入区启用窗口：全程百万分之一刻度的起止整数（0 ≤ start ≤ end ≤ 1000000）。 */
+export interface ActiveWindow {
+  start_tick: number;
+  end_tick: number;
+}
+
 export interface FlyZone {
   id: string;
   vertices: StagePoint[];
+  /** 可选启用窗口；缺省时该禁入区全程生效。 */
+  active_window?: ActiveWindow;
 }
 
 export interface StagePayload {

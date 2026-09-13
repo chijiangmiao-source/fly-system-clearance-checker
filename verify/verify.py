@@ -512,7 +512,155 @@ def main() -> int:
         except Exception as e:  # noqa: BLE001
             check(f"{name} request", False, repr(e))
 
-    # 9) Web 页面内容
+    # 9) 禁入区启用窗口（zones[].active_window，全程百万分之一刻度）
+    # 验收折线：先穿过未启用区 A（第一段几何接触 t∈[0.05,0.25]，窗口仅覆盖后半程），
+    # 随后命中启用区 B（第二段接触 t∈[0.625,1]，窗口 [0.6,0.8] 覆盖首触）
+    win_fly = {"width": 1000, "height": 1000,
+               "start": {"x": 0, "y": 3000},
+               "waypoints": [{"x": 5000, "y": 3000}],
+               "end": {"x": 9000, "y": 3000}}
+    win_zone_a = {"id": "A", "vertices": [
+        {"x": 1500, "y": 2500}, {"x": 2500, "y": 2500},
+        {"x": 2500, "y": 3500}, {"x": 1500, "y": 3500}],
+        "active_window": {"start_tick": 500000, "end_tick": 1000000}}
+    win_zone_b = {"id": "B", "vertices": [
+        {"x": 7000, "y": 2500}, {"x": 9000, "y": 2500},
+        {"x": 9000, "y": 3500}, {"x": 7000, "y": 3500}]}
+
+    def window_payload(b_window):
+        zb = dict(win_zone_b)
+        if b_window is not None:
+            zb["active_window"] = b_window
+        return {"stage": {"width": 10000, "height": 10000},
+                "fly": win_fly, "zones": [win_zone_a, zb]}
+
+    # 9a) 先穿过未启用区、随后命中启用区：命中 B，结果补充命中窗口及起止展示值
+    try:
+        r = httpx.post(f"{API}/api/check",
+                       json=window_payload({"start_tick": 600000, "end_tick": 800000}), timeout=5)
+        body = r.json()
+        check("window route status 200", r.status_code == 200, str(r.status_code))
+        check("window route hits B", body.get("zone_id") == "B" and body.get("zone_index") == 1, str(body))
+        check("window route global t", body.get("t_fraction") == "5/8", str(body))
+        check("window route segment", body.get("segment_index") == 1
+              and body.get("segment_t_display") == "0.250000", str(body))
+        check("window route position", body.get("position_display") == {"x": "6000", "y": "3000"}, str(body))
+        check("window route echoes window",
+              body.get("active_window") == {"start_tick": 600000, "end_tick": 800000}, str(body))
+        check("window route window display",
+              body.get("active_window_display") == {"start": "0.600000", "end": "0.800000"}, str(body))
+    except Exception as e:  # noqa: BLE001
+        check("window route request", False, repr(e))
+
+    # 9b) 窗口端点接触算碰撞：B 窗口终点 0.625 恰为第二段首触时刻 → 仍命中 5/8
+    try:
+        r = httpx.post(f"{API}/api/check",
+                       json=window_payload({"start_tick": 0, "end_tick": 625000}), timeout=5)
+        body = r.json()
+        check("window endpoint-touch collides",
+              r.status_code == 200 and body.get("t_fraction") == "5/8"
+              and body.get("zone_id") == "B", str(body))
+    except Exception as e:  # noqa: BLE001
+        check("window endpoint-touch request", False, repr(e))
+
+    # 9c) 相同几何命中因窗口错开而安全：A、B 窗口均不覆盖各自接触区间
+    try:
+        r = httpx.post(f"{API}/api/check",
+                       json=window_payload({"start_tick": 0, "end_tick": 600000}), timeout=5)
+        body = r.json()
+        check("window staggered safe",
+              r.status_code == 200 and body.get("collides") is False
+              and body.get("active_window") is None, str(body))
+    except Exception as e:  # noqa: BLE001
+        check("window staggered request", False, repr(e))
+
+    # 9d) 窗口起点落在接触区间内部：碰撞时刻推迟到窗口起点（全程 7/10，命中 (6600,3000)）
+    try:
+        r = httpx.post(f"{API}/api/check",
+                       json=window_payload({"start_tick": 700000, "end_tick": 1000000}), timeout=5)
+        body = r.json()
+        check("window pushes hit t",
+              r.status_code == 200 and body.get("t_fraction") == "7/10"
+              and body.get("segment_t_display") == "0.400000", str(body))
+        check("window pushes hit position",
+              body.get("position_display") == {"x": "6600", "y": "3000"}, str(body))
+    except Exception as e:  # noqa: BLE001
+        check("window pushes hit request", False, repr(e))
+
+    # 9e) 未填写窗口的旧样例结果不变：原有字段不变，窗口字段为 null
+    try:
+        r = httpx.post(f"{API}/api/check", json=collision, timeout=5)
+        body = r.json()
+        check("legacy no-window fields",
+              r.status_code == 200 and body.get("t_display") == "0.333333"
+              and body.get("edge_index") == 3
+              and body.get("active_window") is None
+              and body.get("active_window_display") is None, str(body))
+    except Exception as e:  # noqa: BLE001
+        check("legacy no-window request", False, repr(e))
+
+    # 9f) 窗口顺序错误（start > end）→ 400 + zones.0.active_window.end_tick
+    bad_order = {"stage": {"width": 10000, "height": 10000},
+                 "fly": {"width": 1000, "height": 1000,
+                         "start": {"x": 0, "y": 500}, "end": {"x": 9000, "y": 500}},
+                 "zones": [{"id": "A", "vertices": [
+                     {"x": 4000, "y": 0}, {"x": 6000, "y": 0},
+                     {"x": 6000, "y": 2000}, {"x": 4000, "y": 2000}],
+                     "active_window": {"start_tick": 700000, "end_tick": 300000}}]}
+    try:
+        r = httpx.post(f"{API}/api/check", json=bad_order, timeout=5)
+        err = r.json().get("error", {})
+        check("window order 400", r.status_code == 400, str(r.status_code))
+        check("window order path", err.get("path") == "zones.0.active_window.end_tick", r.text[:200])
+    except Exception as e:  # noqa: BLE001
+        check("window order request", False, repr(e))
+
+    # 9g) 窗口格式错误（非整数刻度 / 越界 / 非对象）→ 400 + zones 下标内具体字段
+    fmt_cases = [
+        ("window non-integer", {"start_tick": 0.5, "end_tick": 1000000},
+         "zones.0.active_window.start_tick"),
+        ("window tick out of range", {"start_tick": 0, "end_tick": 1000001},
+         "zones.0.active_window.end_tick"),
+        ("window not object", [0, 1000000], "zones.0.active_window"),
+    ]
+    for name, aw, path in fmt_cases:
+        bad = {"stage": {"width": 10000, "height": 10000},
+               "fly": {"width": 1000, "height": 1000,
+                       "start": {"x": 0, "y": 500}, "end": {"x": 9000, "y": 500}},
+               "zones": [{"id": "A", "vertices": [
+                   {"x": 4000, "y": 0}, {"x": 6000, "y": 0},
+                   {"x": 6000, "y": 2000}, {"x": 4000, "y": 2000}],
+                   "active_window": aw}]}
+        try:
+            r = httpx.post(f"{API}/api/check", json=bad, timeout=5)
+            err = r.json().get("error", {})
+            check(f"{name} 400", r.status_code == 400, str(r.status_code))
+            check(f"{name} path", err.get("path") == path, r.text[:200])
+        except Exception as e:  # noqa: BLE001
+            check(f"{name} request", False, repr(e))
+
+    # 9h) 按禁入区顺序检查：zones.1 的窗口错误定位到其自身下标
+    z1_bad = {"stage": {"width": 10000, "height": 10000},
+              "fly": {"width": 1000, "height": 1000,
+                      "start": {"x": 0, "y": 500}, "end": {"x": 9000, "y": 500}},
+              "zones": [
+                  {"id": "A", "vertices": [
+                      {"x": 4000, "y": 0}, {"x": 6000, "y": 0},
+                      {"x": 6000, "y": 2000}, {"x": 4000, "y": 2000}],
+                      "active_window": {"start_tick": 0, "end_tick": 500000}},
+                  {"id": "B", "vertices": [
+                      {"x": 7000, "y": 0}, {"x": 9000, "y": 0},
+                      {"x": 9000, "y": 2000}, {"x": 7000, "y": 2000}],
+                      "active_window": {"start_tick": -1, "end_tick": 500000}}]}
+    try:
+        r = httpx.post(f"{API}/api/check", json=z1_bad, timeout=5)
+        err = r.json().get("error", {})
+        check("window zones-order 400", r.status_code == 400, str(r.status_code))
+        check("window zones-order path", err.get("path") == "zones.1.active_window.start_tick", r.text[:200])
+    except Exception as e:  # noqa: BLE001
+        check("window zones-order request", False, repr(e))
+
+    # 10) Web 页面内容
     try:
         r = httpx.get(f"{WEB}/", timeout=5)
         check("web html", r.status_code == 200 and '<div id="root">' in r.text, r.text[:120])

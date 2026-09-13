@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatMm, formatT, roundHalfUp } from './format';
+import { formatMm, formatT, formatTick, roundHalfUp } from './format';
 
 describe('formatT：十进制 half-up 保留六位', () => {
   it('整数与常规小数', () => {
@@ -30,6 +30,17 @@ describe('formatT：十进制 half-up 保留六位', () => {
   it('级联进位', () => {
     expect(roundHalfUp(0.09999995, 6)).toBe('0.100000');
     expect(roundHalfUp(9.9999999, 6)).toBe('10.000000');
+  });
+});
+
+describe('formatTick：启用窗口刻度换算到 t 轴', () => {
+  it('整百万分之一刻度精确到六位', () => {
+    expect(formatTick(0)).toBe('0.000000');
+    expect(formatTick(1000000)).toBe('1.000000');
+    expect(formatTick(250000)).toBe('0.250000');
+    expect(formatTick(1)).toBe('0.000001');
+    expect(formatTick(999999)).toBe('0.999999');
+    expect(formatTick(625000)).toBe('0.625000');
   });
 });
 

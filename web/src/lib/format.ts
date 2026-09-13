@@ -40,6 +40,11 @@ export function formatT(t: number): string {
   return roundHalfUp(t, 6);
 }
 
+/** 启用窗口刻度（全程百万分之一整数）的展示格式：换算到 t 轴保留六位。 */
+export function formatTick(tick: number): string {
+  return formatT(tick / 1_000_000);
+}
+
 /** 毫米坐标展示：half-up 保留三位并去掉多余尾零。 */
 export function formatMm(v: number): string {
   const s = roundHalfUp(v, 3);

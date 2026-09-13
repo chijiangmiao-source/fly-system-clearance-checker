@@ -35,6 +35,8 @@ const hitResult = (
   segment_t_display: '0.250000',
   position,
   position_display: { x: String(position.x), y: String(position.y) },
+  active_window: null,
+  active_window_display: null,
 });
 
 const SAFE_RESULT: CheckResult = {
@@ -48,6 +50,8 @@ const SAFE_RESULT: CheckResult = {
   segment_t_display: null,
   position: null,
   position_display: null,
+  active_window: null,
+  active_window_display: null,
 };
 
 describe('routePoints', () => {

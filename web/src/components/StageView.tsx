@@ -1,4 +1,4 @@
-import { formatMm } from '../lib/format';
+import { formatMm, formatTick } from '../lib/format';
 import { routePoints, splitRouteAtHit, toPointsAttr } from '../lib/route';
 import { StageCanvas, useStageCanvas } from './StageCanvas';
 import type { CheckResult, StagePayload } from '../lib/types';
@@ -53,6 +53,20 @@ function StageScene({ payload, result }: Props) {
             <text x={cxp} y={Y(cyp)} fontSize={font} fill="#c0392b" textAnchor="middle">
               禁入区 {z.id}
             </text>
+            {/* 选填启用窗口：在禁入区旁标注生效区间（刻度换算到 t 轴） */}
+            {z.active_window && (
+              <text
+                x={cxp}
+                y={Y(cyp) + font * 1.25}
+                fontSize={fontSmall}
+                fill="#c0392b"
+                textAnchor="middle"
+                data-testid={`zone-window-${z.id}`}
+              >
+                生效 [{formatTick(z.active_window.start_tick)},{' '}
+                {formatTick(z.active_window.end_tick)}]
+              </text>
+            )}
           </g>
         );
       })}

@@ -180,6 +180,15 @@ function SinglePanel() {
                 <div>
                   责任边（从 0 起）：<strong data-testid="edge-value">#{result.edge_index}</strong>
                 </div>
+                {result.active_window && result.active_window_display && (
+                  <div>
+                    命中窗口：
+                    <strong data-testid="window-value">
+                      [{result.active_window_display.start}, {result.active_window_display.end}]
+                    </strong>
+                    （{result.active_window.start_tick}–{result.active_window.end_tick} 刻）
+                  </div>
+                )}
                 <div>
                   碰撞姿态左下角：
                   <strong data-testid="pos-value">

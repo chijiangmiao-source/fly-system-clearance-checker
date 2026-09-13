@@ -32,6 +32,8 @@ const hit = (over: Partial<CheckResult>): CheckResult => ({
   segment_t_display: '0.250000',
   position: { x: 6000, y: 3000 },
   position_display: { x: '6000', y: '3000' },
+  active_window: null,
+  active_window_display: null,
   ...over,
 });
 
@@ -46,6 +48,8 @@ const SAFE: CheckResult = {
   segment_t_display: null,
   position: null,
   position_display: null,
+  active_window: null,
+  active_window_display: null,
 };
 
 describe('StageView 服务端渲染冒烟（无需浏览器）', () => {
@@ -138,5 +142,31 @@ describe('StageView 服务端渲染冒烟（无需浏览器）', () => {
     expect(html).toContain('data-testid="path-safe"');
     expect(html).toContain('data-testid="path-danger"');
     expect(html).not.toContain('waypoint-pose-');
+  });
+
+  it('禁入区填写启用窗口：区旁标注生效区间；未填写则不标注', () => {
+    const payload = basePayload({
+      width: 1000,
+      height: 1000,
+      start: { x: 0, y: 3000 },
+      waypoints: [{ x: 5000, y: 3000 }],
+      end: { x: 9000, y: 3000 },
+    });
+    payload.zones[0].active_window = { start_tick: 600000, end_tick: 800000 };
+    payload.zones.push({
+      id: 'B',
+      vertices: [
+        { x: 1500, y: 2500 },
+        { x: 2500, y: 2500 },
+        { x: 2500, y: 3500 },
+        { x: 1500, y: 3500 },
+      ],
+    });
+    const html = renderToStaticMarkup(
+      createElement(StageView, { payload, result: hit({}) }),
+    );
+    expect(html).toContain('data-testid="zone-window-A"');
+    expect(html).toContain('生效 [0.600000, 0.800000]');
+    expect(html).not.toContain('data-testid="zone-window-B"');
   });
 });

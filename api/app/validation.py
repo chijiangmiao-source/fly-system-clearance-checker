@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from .geometry import segments_intersect
+from .geometry import WINDOW_TICKS, segments_intersect
 
 STAGE_SIZE = 10000
 
@@ -253,6 +253,34 @@ def validate_route_fields(
     return result
 
 
+def _validate_active_window(zone: dict, zpath: str) -> dict | None:
+    """校验选填的禁入区启用窗口；未提供返回 None（视为全程生效）。
+
+    窗口以全程百万分之一刻度的起止整数描述启用区间，须满足
+    0 ≤ start_tick ≤ end_tick ≤ WINDOW_TICKS；错误定位到
+    zones.<i>.active_window 下的具体字段。
+    """
+    if "active_window" not in zone:
+        return None
+    apath = f"{zpath}.active_window"
+    aw = zone["active_window"]
+    if not isinstance(aw, dict):
+        raise FieldError(apath, "must be an object")
+    start_tick = _int_field(aw, "start_tick", f"{apath}.start_tick")
+    if not 0 <= start_tick <= WINDOW_TICKS:
+        raise FieldError(
+            f"{apath}.start_tick", f"must satisfy 0 <= start_tick <= {WINDOW_TICKS}"
+        )
+    end_tick = _int_field(aw, "end_tick", f"{apath}.end_tick")
+    if not 0 <= end_tick <= WINDOW_TICKS:
+        raise FieldError(
+            f"{apath}.end_tick", f"must satisfy 0 <= end_tick <= {WINDOW_TICKS}"
+        )
+    if start_tick > end_tick:
+        raise FieldError(f"{apath}.end_tick", "must satisfy start_tick <= end_tick")
+    return {"start_tick": start_tick, "end_tick": end_tick}
+
+
 def validate(payload: object) -> dict:
     """校验并返回规范化数据；首个错误以 FieldError 抛出。"""
     if not isinstance(payload, dict):
@@ -292,7 +320,8 @@ def validate(payload: object) -> dict:
                 raise FieldError(f"{vpath}.y", "coordinate out of stage bounds")
             pts.append((x, y))
         _validate_polygon(pts, f"{zpath}.vertices")
-        zones.append({"id": zid, "vertices": pts})
+        window = _validate_active_window(zone, zpath)
+        zones.append({"id": zid, "vertices": pts, "active_window": window})
 
     return {
         "stage": {"width": STAGE_SIZE, "height": STAGE_SIZE},
