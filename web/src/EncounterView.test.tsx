@@ -136,4 +136,86 @@ describe('EncounterView 服务端渲染冒烟（无需浏览器）', () => {
     expect(html).toContain('data-testid="contact-marker"');
     expect(html).toContain('0.000000');
   });
+
+  it('未提供 duration_weights 的方案不绘制各段耗时标注', () => {
+    const html = renderToStaticMarkup(
+      createElement(EncounterView, { payload: MID_PAYLOAD, result: MID_RESULT }),
+    );
+    expect(html).not.toContain('seg-duration');
+  });
+
+  it('加权方案：在各段旁标出相对耗时与占总时长比例', () => {
+    // A 两段权重 [1,3]，B 单段未加权：t=7/18 首次接触，A 在第 1 段
+    const payload: EncounterPayload = {
+      stage: STAGE,
+      fly_a: {
+        id: 'A', width: 1000, height: 1000,
+        start: { x: 0, y: 4500 },
+        waypoints: [{ x: 4500, y: 4500 }],
+        end: { x: 9000, y: 4500 },
+        duration_weights: [1, 3],
+      },
+      fly_b: {
+        id: 'B', width: 1000, height: 1000,
+        start: { x: 5000, y: 0 }, end: { x: 5000, y: 9000 },
+      },
+    };
+    const result: EncounterResult = {
+      collides: true,
+      t: 7 / 18,
+      t_display: '0.388889',
+      t_fraction: '7/18',
+      fly_a: {
+        id: 'A', segment_index: 1, segment_t_display: '0.185185',
+        position: { x: 16000 / 3, y: 4500 },
+        position_display: { x: '5333.333333', y: '4500' },
+      },
+      fly_b: {
+        id: 'B', segment_index: 0, segment_t_display: '0.388889',
+        position: { x: 5000, y: 3500 },
+        position_display: { x: '5000', y: '3500' },
+      },
+      contact: { x: 17000 / 3, y: 4500 },
+      contact_display: { x: '5666.666667', y: '4500' },
+    };
+    const html = renderToStaticMarkup(createElement(EncounterView, { payload, result }));
+    // A 的两段各标注相对耗时与占比；B 未提供权重不标注
+    expect(html).toContain('data-testid="a-seg-duration-0"');
+    expect(html).toContain('段#0 耗时 1（占 1/4）');
+    expect(html).toContain('data-testid="a-seg-duration-1"');
+    expect(html).toContain('段#1 耗时 3（占 3/4）');
+    expect(html).not.toContain('b-seg-duration');
+    // 检测结果仍展示双方命中段与接触姿态
+    expect(html).toContain('data-testid="a-contact-pose"');
+    expect(html).toContain('data-testid="contact-marker"');
+  });
+
+  it('双方均加权：两条路线的各段都标注', () => {
+    const payload: EncounterPayload = {
+      stage: STAGE,
+      fly_a: {
+        id: 'A', width: 1000, height: 1000,
+        start: { x: 0, y: 4500 },
+        waypoints: [{ x: 4500, y: 4500 }],
+        end: { x: 9000, y: 4500 },
+        duration_weights: [3, 1],
+      },
+      fly_b: {
+        id: 'B', width: 1000, height: 1000,
+        start: { x: 5000, y: 0 },
+        waypoints: [{ x: 5000, y: 4500 }],
+        end: { x: 5000, y: 9000 },
+        duration_weights: [3, 1],
+      },
+    };
+    const html = renderToStaticMarkup(
+      createElement(EncounterView, { payload, result: SAFE_RESULT }),
+    );
+    expect(html).toContain('data-testid="a-seg-duration-0"');
+    expect(html).toContain('data-testid="a-seg-duration-1"');
+    expect(html).toContain('data-testid="b-seg-duration-0"');
+    expect(html).toContain('data-testid="b-seg-duration-1"');
+    expect(html).toContain('段#0 耗时 3（占 3/4）');
+    expect(html).toContain('段#1 耗时 1（占 1/4）');
+  });
 });

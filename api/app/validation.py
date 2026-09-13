@@ -147,11 +147,44 @@ def validate_stage(payload: dict) -> None:
             raise FieldError(f"stage.{key}", f"must equal {STAGE_SIZE}")
 
 
-def validate_route_fields(fly: dict, prefix: str) -> dict:
+def _validate_duration_weights(fly: dict, prefix: str, nseg: int) -> list[int] | None:
+    """校验选填的各段相对耗时（正整数数组，长度等于段数）。
+
+    未提供时返回 None（各段等时）；长度不符定位到 duration_weights 本身，
+    非整数 / 非正整数定位到具体下标。
+    """
+    if "duration_weights" not in fly:
+        return None
+    raw = fly["duration_weights"]
+    path = f"{prefix}.duration_weights"
+    if not isinstance(raw, list):
+        raise FieldError(path, "must be an array")
+    if len(raw) != nseg:
+        raise FieldError(
+            path, f"must have exactly {nseg} weight(s), one per route segment"
+        )
+    weights: list[int] = []
+    for i, w in enumerate(raw):
+        wpath = f"{path}.{i}"
+        # 严格 int（排除 bool 与超长整数的 HugeInt 惰性标记——权重参与精确
+        # 有理数运算，无法以惰性标记代替）
+        if isinstance(w, bool) or not isinstance(w, int):
+            raise FieldError(wpath, "must be an integer")
+        if w < 1:
+            raise FieldError(wpath, "must be a positive integer")
+        weights.append(w)
+    return weights
+
+
+def validate_route_fields(
+    fly: dict, prefix: str, *, with_duration_weights: bool = False
+) -> dict:
     """校验单个吊景块的尺寸与折线路线（对象本身由调用方检查）。
 
     字段路径以 prefix 为根（单吊景为 "fly"，双吊景为 "fly_a"/"fly_b"）。
     严格按路线顺序 start → 各停位 → end 逐点校验，返回规范化路线数据。
+    with_duration_weights 仅在双吊景交会方案中为真：此时按路线顺序在校完
+    整条路线后校验选填的 duration_weights（长度 = 段数）。
     """
     fw = _int_field(fly, "width", f"{prefix}.width")
     if fw < 1:
@@ -207,13 +240,17 @@ def validate_route_fields(fly: dict, prefix: str) -> dict:
             f"duplicate adjacent waypoint at ({x}, {y})",
         )
 
-    return {
+    result = {
         "width": fw,
         "height": fh,
         "start": start,
         "end": end,
         "waypoints": waypoints,
     }
+    if with_duration_weights:
+        nseg = 1 + (len(waypoints) if waypoints else 0)
+        result["duration_weights"] = _validate_duration_weights(fly, prefix, nseg)
+    return result
 
 
 def validate(payload: object) -> dict:
@@ -276,8 +313,9 @@ def _validate_encounter_id(obj: dict, key: str, path: str) -> str:
 def validate_encounter(payload: object) -> dict:
     """校验双吊景交会方案；首个错误以 FieldError 抛出。
 
-    文档顺序：stage → fly_a（id/尺寸/整条路线）→ fly_b → 编号相异；
-    错误字段路径分别落在 fly_a.* 与 fly_b.*，沿用单吊景的错误信封。
+    文档顺序：stage → fly_a（id/尺寸/整条路线/选填 duration_weights）→ fly_b
+    → 编号相异；错误字段路径分别落在 fly_a.* 与 fly_b.*，沿用单吊景的错误信封。
+    duration_weights 为各路线段相对耗时的正整数数组（长度 = 段数），省略时各段等时。
     """
     if not isinstance(payload, dict):
         raise FieldError("", "root must be a JSON object")
@@ -286,11 +324,11 @@ def validate_encounter(payload: object) -> dict:
 
     fly_a_raw = _object_field(payload, "fly_a", "fly_a")
     id_a = _validate_encounter_id(fly_a_raw, "id", "fly_a.id")
-    fly_a = validate_route_fields(fly_a_raw, "fly_a")
+    fly_a = validate_route_fields(fly_a_raw, "fly_a", with_duration_weights=True)
 
     fly_b_raw = _object_field(payload, "fly_b", "fly_b")
     id_b = _validate_encounter_id(fly_b_raw, "id", "fly_b.id")
-    fly_b = validate_route_fields(fly_b_raw, "fly_b")
+    fly_b = validate_route_fields(fly_b_raw, "fly_b", with_duration_weights=True)
 
     if id_a == id_b:
         raise FieldError("fly_b.id", "the two flies must have distinct ids")

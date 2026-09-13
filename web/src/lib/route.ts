@@ -3,6 +3,26 @@ import type { CheckResult, EncounterFly, StagePayload, StagePoint } from './type
 /** 单套吊景的折线顶点（不依赖 zones/id）。 */
 export type FlyRoute = Pick<EncounterFly, 'start' | 'end' | 'waypoints'>;
 
+/** 各段相对耗时：weights 为每段权重，total 为权重总和（占比 = weights[i]/total）。 */
+export interface SegmentDurations {
+  weights: number[];
+  total: number;
+}
+
+/**
+ * 读取吊景的各段相对耗时；未提供 duration_weights（或长度与段数不符，
+ * 服务端会拒绝、此处防御性忽略）时返回 null —— 各段等时，页面不标注。
+ */
+export function segmentDurations(
+  fly: FlyRoute & { duration_weights?: number[] },
+): SegmentDurations | null {
+  const weights = fly.duration_weights;
+  if (!weights || weights.length === 0) return null;
+  if (weights.length !== flyRoutePoints(fly).length - 1) return null;
+  if (weights.some((w) => !Number.isInteger(w) || w < 1)) return null;
+  return { weights, total: weights.reduce((s, w) => s + w, 0) };
+}
+
 /** 完整折线的顶点：start → 各中途停位 → end。 */
 export function routePoints(payload: StagePayload): StagePoint[] {
   return flyRoutePoints(payload.fly);

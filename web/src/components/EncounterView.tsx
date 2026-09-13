@@ -1,5 +1,5 @@
 import { formatMm } from '../lib/format';
-import { flyRoutePoints, splitFlyRouteAtHit, toPointsAttr } from '../lib/route';
+import { flyRoutePoints, segmentDurations, splitFlyRouteAtHit, toPointsAttr } from '../lib/route';
 import { StageCanvas, useStageCanvas } from './StageCanvas';
 import type { EncounterPayload, EncounterResult, FlyPose } from '../lib/types';
 
@@ -41,6 +41,9 @@ function FlyLayer({
     collides && pose && hit
       ? splitFlyRouteAtHit(fly, pose.segment_index, hit)
       : null;
+  const points = flyRoutePoints(fly);
+  // 仅当该吊景提供 duration_weights 时标注各段相对耗时；缺省各段等时不标注
+  const timing = segmentDurations(fly);
 
   return (
     <g data-testid={`route-${kind}`}>
@@ -66,13 +69,38 @@ function FlyLayer({
         </>
       ) : (
         <polyline
-          points={toPointsAttr(flyRoutePoints(fly), Y)}
+          points={toPointsAttr(points, Y)}
           fill="none"
           stroke="#27ae60"
           strokeWidth={strokeW}
           data-testid={`path-${kind}-safe`}
         />
       )}
+
+      {/* 各段相对耗时与占总时长比例（仅当该吊景提供 duration_weights） */}
+      {timing &&
+        points.slice(0, -1).map((p0, i) => {
+          const p1 = points[i + 1];
+          const dx = p1.x - p0.x;
+          const dy = p1.y - p0.y;
+          const len = Math.hypot(dx, dy) || 1;
+          // 沿段法向偏移，避免标注压住路线
+          const mx = (p0.x + p1.x) / 2 + (-dy / len) * view.w * 0.012;
+          const my = (p0.y + p1.y) / 2 + (dx / len) * view.w * 0.012;
+          return (
+            <text
+              key={i}
+              data-testid={`${kind}-seg-duration-${i}`}
+              x={mx}
+              y={Y(my)}
+              fontSize={fontSmall}
+              fill={style.label}
+              textAnchor="middle"
+            >
+              {`段#${i} 耗时 ${timing.weights[i]}（占 ${timing.weights[i]}/${timing.total}）`}
+            </text>
+          );
+        })}
 
       {/* 中途停位 */}
       {(fly.waypoints ?? []).map((wp, i) => (

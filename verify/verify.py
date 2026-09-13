@@ -419,6 +419,76 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         check("legacy check request", False, repr(e))
 
+    # 8g) duration_weights：走廊方案等时基线 t=4/9 在 A 第 0 段相撞（未加权不回归）
+    corr_a = {"id": "A", "width": 1000, "height": 1000,
+              "start": {"x": 0, "y": 4500},
+              "waypoints": [{"x": 4500, "y": 4500}],
+              "end": {"x": 9000, "y": 4500}}
+    corr_b = {"id": "B", "width": 1000, "height": 1000,
+              "start": {"x": 5000, "y": 0}, "end": {"x": 5000, "y": 9000}}
+    try:
+        r = httpx.post(f"{API}/api/encounter",
+                       json={"stage": {"width": 10000, "height": 10000},
+                             "fly_a": corr_a, "fly_b": corr_b}, timeout=5)
+        body = r.json()
+        check("enc corridor equal-time status", r.status_code == 200, str(r.status_code))
+        check("enc corridor equal-time t", body.get("t_fraction") == "4/9", str(body))
+        check("enc corridor equal-time seg a", body.get("fly_a", {}).get("segment_index") == 0, str(body))
+    except Exception as e:  # noqa: BLE001
+        check("enc corridor equal-time request", False, repr(e))
+
+    # 8h) A 加权 [3,1]：首段耗时 3/4，抵达走廊时 B 已穿过 → 原本相撞变为全程安全
+    try:
+        r = httpx.post(f"{API}/api/encounter",
+                       json={"stage": {"width": 10000, "height": 10000},
+                             "fly_a": {**corr_a, "duration_weights": [3, 1]},
+                             "fly_b": corr_b}, timeout=5)
+        body = r.json()
+        check("enc weighted stagger status", r.status_code == 200, str(r.status_code))
+        check("enc weighted stagger safe", body.get("collides") is False, str(body))
+    except Exception as e:  # noqa: BLE001
+        check("enc weighted stagger request", False, repr(e))
+
+    # 8i) A 加权 [1,3]：首次接触改在 A 第 1 段，t=7/18
+    try:
+        r = httpx.post(f"{API}/api/encounter",
+                       json={"stage": {"width": 10000, "height": 10000},
+                             "fly_a": {**corr_a, "duration_weights": [1, 3]},
+                             "fly_b": corr_b}, timeout=5)
+        body = r.json()
+        check("enc weighted hit status", r.status_code == 200, str(r.status_code))
+        check("enc weighted hit t", body.get("t_fraction") == "7/18", str(body))
+        check("enc weighted hit seg a", body.get("fly_a", {}).get("segment_index") == 1, str(body))
+        check("enc weighted hit seg b", body.get("fly_b", {}).get("segment_index") == 0, str(body))
+        check("enc weighted hit contact",
+              body.get("contact_display") == {"x": "5666.666667", "y": "4500"}, str(body))
+    except Exception as e:  # noqa: BLE001
+        check("enc weighted hit request", False, repr(e))
+
+    # 8j) 权重长度与段数不符 → 400 + fly_a.duration_weights
+    try:
+        r = httpx.post(f"{API}/api/encounter",
+                       json={"stage": {"width": 10000, "height": 10000},
+                             "fly_a": {**corr_a, "duration_weights": [1, 2, 3]},
+                             "fly_b": corr_b}, timeout=5)
+        err = r.json().get("error", {})
+        check("enc weights length 400", r.status_code == 400, str(r.status_code))
+        check("enc weights length path", err.get("path") == "fly_a.duration_weights", r.text[:200])
+    except Exception as e:  # noqa: BLE001
+        check("enc weights length request", False, repr(e))
+
+    # 8k) 非正权重 → 400 + 具体下标 fly_a.duration_weights.1
+    try:
+        r = httpx.post(f"{API}/api/encounter",
+                       json={"stage": {"width": 10000, "height": 10000},
+                             "fly_a": {**corr_a, "duration_weights": [1, 0]},
+                             "fly_b": corr_b}, timeout=5)
+        err = r.json().get("error", {})
+        check("enc weights zero 400", r.status_code == 400, str(r.status_code))
+        check("enc weights zero path", err.get("path") == "fly_a.duration_weights.1", r.text[:200])
+    except Exception as e:  # noqa: BLE001
+        check("enc weights zero request", False, repr(e))
+
     # 9) Web 页面内容
     try:
         r = httpx.get(f"{WEB}/", timeout=5)

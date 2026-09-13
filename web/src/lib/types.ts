@@ -45,6 +45,8 @@ export interface EncounterFly {
   start: StagePoint;
   end: StagePoint;
   waypoints?: StagePoint[];
+  /** 可选各路线段相对耗时（正整数数组，长度 = 段数）；缺省时各段等时。 */
+  duration_weights?: number[];
 }
 
 export interface EncounterPayload {

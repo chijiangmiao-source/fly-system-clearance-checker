@@ -75,7 +75,8 @@ export function EncounterPanel() {
     <>
       <section className="panel">
         <label htmlFor="encounter-input">
-          交会方案 UTF-8 JSON（stage / fly_a / fly_b；两套吊景各带 id 与路线，全程等时 t∈[0,1]）
+          交会方案 UTF-8 JSON（stage / fly_a / fly_b；两套吊景各带 id 与路线，全程 t∈[0,1]；
+          可选 duration_weights 指定各段相对耗时，缺省各段等时）
         </label>
         <textarea
           id="encounter-input"

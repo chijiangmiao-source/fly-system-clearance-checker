@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { flyRoutePoints, routePoints, splitFlyRouteAtHit, splitRouteAtHit, toPointsAttr } from './route';
+import {
+  flyRoutePoints,
+  routePoints,
+  segmentDurations,
+  splitFlyRouteAtHit,
+  splitRouteAtHit,
+  toPointsAttr,
+} from './route';
 import type { CheckResult, EncounterFly, StagePayload } from './types';
 
 const payload = (waypoints?: Array<{ x: number; y: number }>): StagePayload => ({
@@ -193,5 +200,43 @@ describe('交会方案：flyRoutePoints / splitFlyRouteAtHit', () => {
 
   it('越界段号返回 null', () => {
     expect(splitFlyRouteAtHit(flyA, 5, { x: 1, y: 1 })).toBeNull();
+  });
+});
+
+describe('交会方案：segmentDurations 各段相对耗时', () => {
+  const flyA: EncounterFly = {
+    id: 'A',
+    width: 1000,
+    height: 1000,
+    start: { x: 0, y: 4500 },
+    waypoints: [{ x: 4500, y: 4500 }],
+    end: { x: 9000, y: 4500 },
+  };
+
+  it('未提供 duration_weights 时返回 null（各段等时，不标注）', () => {
+    expect(segmentDurations(flyA)).toBeNull();
+    expect(segmentDurations({ ...flyA, duration_weights: [] })).toBeNull();
+  });
+
+  it('提供权重时返回各段相对耗时与权重总和', () => {
+    expect(segmentDurations({ ...flyA, duration_weights: [3, 1] })).toEqual({
+      weights: [3, 1],
+      total: 4,
+    });
+  });
+
+  it('单段路线接受单元素权重', () => {
+    const one: EncounterFly = {
+      id: 'B', width: 1000, height: 1000,
+      start: { x: 5000, y: 0 }, end: { x: 5000, y: 9000 },
+      duration_weights: [5],
+    };
+    expect(segmentDurations(one)).toEqual({ weights: [5], total: 5 });
+  });
+
+  it('长度与段数不符或非正整数时防御性返回 null', () => {
+    expect(segmentDurations({ ...flyA, duration_weights: [1, 2, 3] })).toBeNull();
+    expect(segmentDurations({ ...flyA, duration_weights: [1, 0] })).toBeNull();
+    expect(segmentDurations({ ...flyA, duration_weights: [1, 1.5] })).toBeNull();
   });
 });
