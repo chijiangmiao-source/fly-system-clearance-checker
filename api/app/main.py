@@ -31,6 +31,12 @@ def _parse_json_int(s: str):
         return int(s)
     return HugeInt(s)
 
+
+def _reject_json_constant(value: str):
+    # NaN / Infinity / -Infinity 不是合法 JSON 语法（Python json 默认放行），
+    # 必须在正文层按语法错误拒绝（path 为 ""），而不能落到字段类型校验。
+    raise ValueError(f"non-standard JSON constant: {value}")
+
 app = FastAPI(title="Stage Fly Collision API")
 app.add_middleware(
     CORSMiddleware,
@@ -86,7 +92,11 @@ async def check(request: Request):
     if not raw:
         return _err(400, "", "request body is empty")
     try:
-        payload = json.loads(raw.decode("utf-8"), parse_int=_parse_json_int)
+        payload = json.loads(
+            raw.decode("utf-8"),
+            parse_int=_parse_json_int,
+            parse_constant=_reject_json_constant,
+        )
     except UnicodeDecodeError:
         return _err(400, "", "request body is not valid UTF-8")
     except ValueError:

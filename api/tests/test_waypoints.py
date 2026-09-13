@@ -311,6 +311,30 @@ class TestWaypointValidation:
         assert code == 400
         assert body["error"]["path"] == "fly.waypoints.0.x"
 
+    def test_waypoint_oob_before_end_oob_route_order(self):
+        # 首个停位与终点同时越界：按路线顺序先指出首个停位横坐标
+        p = self._base([{"x": 9001, "y": 0}])
+        p["fly"]["end"] = {"x": 9001, "y": 9001}
+        code, body = post(p)
+        assert code == 400
+        assert body["error"]["path"] == "fly.waypoints.0.x"
+
+    def test_second_waypoint_oob_before_end_oob(self):
+        # 终点与第二个停位同时越界：先报第二个停位
+        p = self._base([{"x": 5000, "y": 5000}, {"x": 1, "y": 9001}])
+        p["fly"]["end"] = {"x": 9001, "y": 9001}
+        code, body = post(p)
+        assert code == 400
+        assert body["error"]["path"] == "fly.waypoints.1.y"
+
+    def test_end_oob_alone_with_valid_waypoints(self):
+        # 停位全部合法、仅终点越界：仍报终点
+        p = self._base([{"x": 5000, "y": 5000}])
+        p["fly"]["end"] = {"x": 9001, "y": 9001}
+        code, body = post(p)
+        assert code == 400
+        assert body["error"]["path"] == "fly.end.x"
+
 
 class TestWaypointValidationDirect:
     def test_validate_returns_waypoints(self):

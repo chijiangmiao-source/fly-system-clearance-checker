@@ -107,10 +107,49 @@ class TestValidationErrors:
         assert code == 400
         assert body["error"]["path"] == ""
 
+    @pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+    def test_nonstandard_numeric_constant_is_syntax_error(self, constant):
+        # NaN / Infinity 不是合法 JSON 常量：须在正文层拒绝（path ""），
+        # 不能落到字段类型错误（如 fly.waypoints.0.x）
+        text = (
+            '{"stage":{"width":10000,"height":10000},'
+            '"fly":{"width":1000,"height":1000,"start":{"x":0,"y":0},'
+            f'"waypoints":[{{"x":{constant},"y":0}}],'
+            '"end":{"x":1000,"y":0}},'
+            '"zones":[]}'
+        )
+        code, body = post(text)
+        assert code == 400
+        assert body["error"]["path"] == ""
+        assert "JSON" in body["error"]["message"]
+
+    def test_nan_at_root_is_syntax_error(self):
+        code, body = post("NaN")
+        assert code == 400
+        assert body["error"]["path"] == ""
+
     def test_root_not_object(self):
         code, body = post("[1, 2, 3]")
         assert code == 400
         assert body["error"]["path"] == ""
+
+    def test_invalid_utf8_body_rejected(self):
+        # 禁入区名称中夹带非法 UTF-8 字节：整份请求必须拒绝，不得替换字符后继续
+        raw = (
+            '{"stage":{"width":10000,"height":10000},'
+            '"fly":{"width":1000,"height":1000,"start":{"x":0,"y":500},'
+            '"end":{"x":1000,"y":500}},'
+            '"zones":[{"id":"A\xff","vertices":'
+            '[{"x":0,"y":0},{"x":100,"y":0},{"x":0,"y":100}]}]}'
+        ).encode("latin-1")
+        r = client.post(
+            "/api/check",
+            content=raw,
+            headers={"Content-Type": "application/json; charset=utf-8"},
+        )
+        assert r.status_code == 400
+        assert r.json()["error"]["path"] == ""
+        assert "UTF-8" in r.json()["error"]["message"]
 
     def test_missing_stage(self):
         p = payload()

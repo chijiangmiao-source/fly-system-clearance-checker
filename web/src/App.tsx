@@ -14,12 +14,14 @@ export default function App() {
   const [result, setResult] = useState<CheckResult | null>(null);
   const [payload, setPayload] = useState<StagePayload | null>(null);
   const [error, setError] = useState<ErrorState | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function onSubmit() {
     setBusy(true);
     // 先清除旧图与旧错误；失败时保留原文
     setError(null);
+    setFileError(null);
     setResult(null);
     setPayload(null);
     try {
@@ -44,9 +46,32 @@ export default function App() {
   function onFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f) return;
+    setFileError(null);
     const reader = new FileReader();
-    reader.onload = () => setText(String(reader.result ?? ''));
-    reader.readAsText(f, 'utf-8');
+    reader.onload = () => {
+      const buf = reader.result;
+      if (!(buf instanceof ArrayBuffer)) {
+        setFileError('文件读取失败，请重新选择');
+        return;
+      }
+      // 致命模式解码：任何非法 UTF-8 字节序列都直接拒绝，
+      // 不做 U+FFFD 替换，避免带着损坏内容继续检测
+      let decoded: string;
+      try {
+        decoded = new TextDecoder('utf-8', { fatal: true }).decode(buf);
+      } catch {
+        setFileError('文件不是合法的 UTF-8 编码，请另存为 UTF-8 后重新上传');
+        e.target.value = '';
+        return;
+      }
+      setText(decoded);
+      e.target.value = '';
+    };
+    reader.onerror = () => {
+      setFileError('文件读取失败，请重新选择');
+      e.target.value = '';
+    };
+    reader.readAsArrayBuffer(f);
   }
 
   return (
@@ -62,7 +87,10 @@ export default function App() {
             id="payload-input"
             data-testid="payload-input"
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => {
+              setText(e.target.value);
+              setFileError(null);
+            }}
             spellCheck={false}
             rows={18}
           />
@@ -77,6 +105,12 @@ export default function App() {
               {busy ? '检测中…' : '执行检测'}
             </button>
           </div>
+
+          {fileError && (
+            <div className="error-banner" data-testid="file-error" role="alert">
+              <div data-testid="file-error-message">{fileError}</div>
+            </div>
+          )}
 
           {error && (
             <div className="error-banner" data-testid="error-banner" role="alert">

@@ -322,3 +322,79 @@ test('不含 waypoints 的既有请求：画面与字段不回归', async ({ pag
   expect(safePts).toBe('0,9500 3000,9500');
   expect(dangerPts).toBe('3000,9500 9000,9500');
 });
+
+test('终点与首个停位同时越界：按路线顺序先报首个停位横坐标', async ({ page }) => {
+  const BOTH_OOB = JSON.stringify({
+    stage: { width: 10000, height: 10000 },
+    fly: {
+      width: 1000,
+      height: 1000,
+      start: { x: 0, y: 0 },
+      waypoints: [{ x: 9001, y: 0 }],
+      end: { x: 9001, y: 9001 },
+    },
+    zones: [],
+  });
+  await page.goto('/');
+  await page.getByTestId('payload-input').fill(BOTH_OOB);
+  await page.getByTestId('submit-btn').click();
+  await expect(page.getByTestId('error-path')).toHaveText('fly.waypoints.0.x');
+});
+
+test('停位横坐标写成非标准数值常量 NaN：按 JSON 语法错误拒绝（字段路径为根）', async ({ page }) => {
+  // 不用 JSON.stringify：NaN 不是合法 JSON，需要保留原文提交
+  const NAN_BODY =
+    '{"stage":{"width":10000,"height":10000},' +
+    '"fly":{"width":1000,"height":1000,"start":{"x":0,"y":0},' +
+    '"waypoints":[{"x":NaN,"y":0}],"end":{"x":1000,"y":0}},' +
+    '"zones":[]}';
+  await page.goto('/');
+  await page.getByTestId('payload-input').fill(NAN_BODY);
+  await page.getByTestId('submit-btn').click();
+  await expect(page.getByTestId('error-banner')).toBeVisible();
+  await expect(page.getByTestId('error-path')).toHaveText('(root)');
+  await expect(page.getByTestId('error-message')).toContainText('JSON');
+});
+
+test('上传含非法 UTF-8 字节的文件：拒绝并提示，不替换字符、不继续检测', async ({ page }) => {
+  // 禁入区 id 中夹带非法字节 0xFF 0xFE
+  const invalid = Buffer.concat([
+    Buffer.from(
+      '{"stage":{"width":10000,"height":10000},' +
+        '"fly":{"width":1000,"height":1000,"start":{"x":0,"y":500},"end":{"x":1000,"y":500}},' +
+        '"zones":[{"id":"A',
+      'utf-8',
+    ),
+    Buffer.from([0xff, 0xfe]),
+    Buffer.from(
+      '","vertices":[{"x":0,"y":0},{"x":100,"y":0},{"x":0,"y":100}]}]}',
+      'utf-8',
+    ),
+  ]);
+  await page.goto('/');
+  const before = await page.getByTestId('payload-input').inputValue();
+  await page.getByTestId('file-input').setInputFiles({
+    name: 'bad-utf8.json',
+    mimeType: 'application/json',
+    buffer: invalid,
+  });
+
+  await expect(page.getByTestId('file-error')).toBeVisible();
+  await expect(page.getByTestId('file-error-message')).toContainText('UTF-8');
+  // 原文未被 U+FFFD 污染（文本框保持上传前内容）
+  await expect(page.getByTestId('payload-input')).toHaveValue(before);
+  // 未触发检测：无旧图清除以外的面板出现
+  await expect(page.getByTestId('error-banner')).toHaveCount(0);
+  await expect(page.getByTestId('result-panel')).toHaveCount(0);
+});
+
+test('上传合法 UTF-8 文件：正常载入文本且无文件错误提示', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('file-input').setInputFiles({
+    name: 'route.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(COLLISION, 'utf-8'),
+  });
+  await expect(page.getByTestId('payload-input')).toHaveValue(COLLISION);
+  await expect(page.getByTestId('file-error')).toHaveCount(0);
+});

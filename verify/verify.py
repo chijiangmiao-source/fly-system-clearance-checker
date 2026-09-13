@@ -225,7 +225,78 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         check("legacy request", False, repr(e))
 
-    # 7) Web 页面内容
+    # 6g) 首个停位与终点同时越界 → 按路线顺序先报 fly.waypoints.0.x
+    wbo = {"stage": {"width": 10000, "height": 10000},
+           "fly": {"width": 1000, "height": 1000,
+                   "start": {"x": 0, "y": 0},
+                   "waypoints": [{"x": 9001, "y": 0}],
+                   "end": {"x": 9001, "y": 9001}},
+           "zones": []}
+    try:
+        r = httpx.post(f"{API}/api/check", json=wbo, timeout=5)
+        err = r.json().get("error", {})
+        check("waypoint-before-end oob 400", r.status_code == 400, str(r.status_code))
+        check("waypoint-before-end oob path", err.get("path") == "fly.waypoints.0.x", r.text[:200])
+    except Exception as e:  # noqa: BLE001
+        check("waypoint-before-end oob request", False, repr(e))
+
+    # 7a) 非标准数值常量 NaN：属非法 JSON 语法 → 400 + path ""，不得报字段类型错误
+    nan_text = (
+        '{"stage":{"width":10000,"height":10000},'
+        '"fly":{"width":1000,"height":1000,"start":{"x":0,"y":0},'
+        '"waypoints":[{"x":NaN,"y":0}],"end":{"x":1000,"y":0}},'
+        '"zones":[]}'
+    )
+    try:
+        r = httpx.post(
+            f"{API}/api/check",
+            content=nan_text.encode("utf-8"),
+            headers={"Content-Type": "application/json; charset=utf-8"},
+            timeout=5,
+        )
+        err = r.json().get("error", {})
+        check("NaN constant 400", r.status_code == 400, str(r.status_code))
+        check("NaN constant syntax path", err.get("path") == "", r.text[:200])
+    except Exception as e:  # noqa: BLE001
+        check("NaN constant request", False, repr(e))
+
+    # 7b) Infinity / -Infinity 同样按语法错误拒绝
+    for const in ("Infinity", "-Infinity"):
+        inf_text = nan_text.replace("NaN", const)
+        try:
+            r = httpx.post(
+                f"{API}/api/check",
+                content=inf_text.encode("utf-8"),
+                headers={"Content-Type": "application/json; charset=utf-8"},
+                timeout=5,
+            )
+            check(f"{const} constant syntax path",
+                  r.status_code == 400 and r.json().get("error", {}).get("path") == "",
+                  r.text[:200])
+        except Exception as e:  # noqa: BLE001
+            check(f"{const} constant request", False, repr(e))
+
+    # 7c) 禁入区名称含非法 UTF-8 字节 → 400 + path ""，整份拒绝、不得替换字符继续
+    bad_utf8 = (
+        b'{"stage":{"width":10000,"height":10000},'
+        b'"fly":{"width":1000,"height":1000,"start":{"x":0,"y":500},"end":{"x":1000,"y":500}},'
+        b'"zones":[{"id":"A\xff","vertices":'
+        b'[{"x":0,"y":0},{"x":100,"y":0},{"x":0,"y":100}]}]}'
+    )
+    try:
+        r = httpx.post(
+            f"{API}/api/check",
+            content=bad_utf8,
+            headers={"Content-Type": "application/json; charset=utf-8"},
+            timeout=5,
+        )
+        err = r.json().get("error", {})
+        check("invalid UTF-8 400", r.status_code == 400, str(r.status_code))
+        check("invalid UTF-8 path", err.get("path") == "", r.text[:200])
+    except Exception as e:  # noqa: BLE001
+        check("invalid UTF-8 request", False, repr(e))
+
+    # 8) Web 页面内容
     try:
         r = httpx.get(f"{WEB}/", timeout=5)
         check("web html", r.status_code == 200 and '<div id="root">' in r.text, r.text[:120])
