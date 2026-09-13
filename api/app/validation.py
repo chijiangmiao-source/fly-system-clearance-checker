@@ -138,24 +138,27 @@ def _validate_polygon(pts: list[tuple[int, int]], path: str) -> None:
         raise FieldError(path, "degenerate polygon: zero area")
 
 
-def validate(payload: object) -> dict:
-    """校验并返回规范化数据；首个错误以 FieldError 抛出。"""
-    if not isinstance(payload, dict):
-        raise FieldError("", "root must be a JSON object")
-
+def validate_stage(payload: dict) -> None:
+    """校验共用台口尺寸；首个错误以 FieldError 抛出。"""
     stage = _object_field(payload, "stage", "stage")
     for key in ("width", "height"):
         v = _int_field(stage, key, f"stage.{key}")
         if v != STAGE_SIZE:
             raise FieldError(f"stage.{key}", f"must equal {STAGE_SIZE}")
 
-    fly = _object_field(payload, "fly", "fly")
-    fw = _int_field(fly, "width", "fly.width")
+
+def validate_route_fields(fly: dict, prefix: str) -> dict:
+    """校验单个吊景块的尺寸与折线路线（对象本身由调用方检查）。
+
+    字段路径以 prefix 为根（单吊景为 "fly"，双吊景为 "fly_a"/"fly_b"）。
+    严格按路线顺序 start → 各停位 → end 逐点校验，返回规范化路线数据。
+    """
+    fw = _int_field(fly, "width", f"{prefix}.width")
     if fw < 1:
-        raise FieldError("fly.width", "must be a positive integer")
-    fh = _int_field(fly, "height", "fly.height")
+        raise FieldError(f"{prefix}.width", "must be a positive integer")
+    fh = _int_field(fly, "height", f"{prefix}.height")
     if fh < 1:
-        raise FieldError("fly.height", "must be a positive integer")
+        raise FieldError(f"{prefix}.height", "must be a positive integer")
 
     def _check_point(v: object, path: str) -> dict:
         # 单个路线点：结构 → 类型 → 台口越界，x 先于 y，
@@ -171,18 +174,19 @@ def validate(payload: object) -> dict:
 
     # 严格按路线顺序 start → 各停位 → end 逐点校验（每点结构、类型、越界一并完成）：
     # 起点越界必须先于后续停位/终点的任何错误；停位又先于终点。
-    start = _check_point(fly.get("start", _MISSING), "fly.start")
+    start = _check_point(fly.get("start", _MISSING), f"{prefix}.start")
 
     # 可选中途停位：按 start → 各停位 → end 组成折线路线
     waypoints: list[dict] | None = None
     if "waypoints" in fly:
         wps_raw = fly["waypoints"]
+        wp_path = f"{prefix}.waypoints"
         if not isinstance(wps_raw, list):
-            raise FieldError("fly.waypoints", "must be an array")
+            raise FieldError(wp_path, "must be an array")
         waypoints = []
         prev = start
         for i, wp_raw in enumerate(wps_raw):
-            wpath = f"fly.waypoints.{i}"
+            wpath = f"{wp_path}.{i}"
             pt = _check_point(wp_raw, wpath)
             # 相邻重复点（含与起点重合），错误定位到后一个停位的下标
             if pt == prev:
@@ -192,15 +196,35 @@ def validate(payload: object) -> dict:
             waypoints.append(pt)
             prev = pt
 
-    end = _check_point(fly.get("end", _MISSING), "fly.end")
+    end = _check_point(fly.get("end", _MISSING), f"{prefix}.end")
     # 末停位与终点重合：错误位置在末停位（路线上早于终点），仍定位到该停位下标
     if waypoints and waypoints[-1] == end:
         x = waypoints[-1]["x"]
         y = waypoints[-1]["y"]
         k = len(waypoints) - 1
         raise FieldError(
-            f"fly.waypoints.{k}", f"duplicate adjacent waypoint at ({x}, {y})"
+            f"{prefix}.waypoints.{k}",
+            f"duplicate adjacent waypoint at ({x}, {y})",
         )
+
+    return {
+        "width": fw,
+        "height": fh,
+        "start": start,
+        "end": end,
+        "waypoints": waypoints,
+    }
+
+
+def validate(payload: object) -> dict:
+    """校验并返回规范化数据；首个错误以 FieldError 抛出。"""
+    if not isinstance(payload, dict):
+        raise FieldError("", "root must be a JSON object")
+
+    validate_stage(payload)
+
+    fly = _object_field(payload, "fly", "fly")
+    fly_data = validate_route_fields(fly, "fly")
 
     zones_raw = _required(payload, "zones", "zones")
     if not isinstance(zones_raw, list):
@@ -235,12 +259,44 @@ def validate(payload: object) -> dict:
 
     return {
         "stage": {"width": STAGE_SIZE, "height": STAGE_SIZE},
-        "fly": {
-            "width": fw,
-            "height": fh,
-            "start": start,
-            "end": end,
-            "waypoints": waypoints,
-        },
+        "fly": fly_data,
         "zones": zones,
+    }
+
+
+def _validate_encounter_id(obj: dict, key: str, path: str) -> str:
+    v = _required(obj, key, path)
+    if not isinstance(v, str):
+        raise FieldError(path, "must be a string")
+    if v == "":
+        raise FieldError(path, "must not be empty")
+    return v
+
+
+def validate_encounter(payload: object) -> dict:
+    """校验双吊景交会方案；首个错误以 FieldError 抛出。
+
+    文档顺序：stage → fly_a（id/尺寸/整条路线）→ fly_b → 编号相异；
+    错误字段路径分别落在 fly_a.* 与 fly_b.*，沿用单吊景的错误信封。
+    """
+    if not isinstance(payload, dict):
+        raise FieldError("", "root must be a JSON object")
+
+    validate_stage(payload)
+
+    fly_a_raw = _object_field(payload, "fly_a", "fly_a")
+    id_a = _validate_encounter_id(fly_a_raw, "id", "fly_a.id")
+    fly_a = validate_route_fields(fly_a_raw, "fly_a")
+
+    fly_b_raw = _object_field(payload, "fly_b", "fly_b")
+    id_b = _validate_encounter_id(fly_b_raw, "id", "fly_b.id")
+    fly_b = validate_route_fields(fly_b_raw, "fly_b")
+
+    if id_a == id_b:
+        raise FieldError("fly_b.id", "the two flies must have distinct ids")
+
+    return {
+        "stage": {"width": STAGE_SIZE, "height": STAGE_SIZE},
+        "fly_a": {"id": id_a, **fly_a},
+        "fly_b": {"id": id_b, **fly_b},
     }

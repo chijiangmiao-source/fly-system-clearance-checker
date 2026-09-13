@@ -1,4 +1,4 @@
-import type { CheckResult } from './types';
+import type { CheckResult, EncounterResult } from './types';
 
 export class ApiRequestError extends Error {
   constructor(
@@ -11,8 +11,7 @@ export class ApiRequestError extends Error {
   }
 }
 
-/** 把用户输入的原文作为请求体真实提交给 API。 */
-export async function checkStage(text: string, url = '/api/check'): Promise<CheckResult> {
+async function postJson<T>(text: string, url: string): Promise<T> {
   let resp: Response;
   try {
     resp = await fetch(url, {
@@ -28,5 +27,15 @@ export async function checkStage(text: string, url = '/api/check'): Promise<Chec
     const err = data?.error;
     throw new ApiRequestError(err?.path ?? '', err?.message ?? `HTTP ${resp.status}`, resp.status);
   }
-  return data as CheckResult;
+  return data as T;
+}
+
+/** 把用户输入的原文作为请求体真实提交给 API。 */
+export function checkStage(text: string, url = '/api/check'): Promise<CheckResult> {
+  return postJson<CheckResult>(text, url);
+}
+
+/** 双吊景交会检测：原文提交到独立的 /api/encounter。 */
+export function checkEncounter(text: string, url = '/api/encounter'): Promise<EncounterResult> {
+  return postJson<EncounterResult>(text, url);
 }

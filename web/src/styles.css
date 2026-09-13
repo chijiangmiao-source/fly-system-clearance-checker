@@ -33,6 +33,33 @@ main {
   align-items: start;
 }
 
+.mode-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.mode-tabs .tab {
+  background: #d5dbdb;
+  color: #2c3e50;
+  padding: 7px 18px;
+  font-size: 14px;
+}
+
+.mode-tabs .tab.active {
+  background: #2980b9;
+  color: #fff;
+}
+
+/* 面板包裹层不参与布局，使其内 panel / canvas-area 直接成为 main 网格项 */
+.mode-panel {
+  display: contents;
+}
+
+.mode-panel.hidden {
+  display: none;
+}
+
 .panel label {
   display: block;
   font-size: 13px;

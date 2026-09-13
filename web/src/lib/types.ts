@@ -36,3 +36,39 @@ export interface StagePayload {
   };
   zones: FlyZone[];
 }
+
+/** 双吊景交会方案中的单套吊景（带编号与各自折线路线）。 */
+export interface EncounterFly {
+  id: string;
+  width: number;
+  height: number;
+  start: StagePoint;
+  end: StagePoint;
+  waypoints?: StagePoint[];
+}
+
+export interface EncounterPayload {
+  stage: { width: number; height: number };
+  fly_a: EncounterFly;
+  fly_b: EncounterFly;
+}
+
+/** 首次接触时某一套吊景的姿态与所在段。 */
+export interface FlyPose {
+  id: string;
+  segment_index: number;
+  segment_t_display: string;
+  position: { x: number; y: number };
+  position_display: { x: string; y: string };
+}
+
+export interface EncounterResult {
+  collides: boolean;
+  t: number | null;
+  t_display: string | null;
+  t_fraction?: string | null;
+  fly_a: FlyPose | null;
+  fly_b: FlyPose | null;
+  contact: { x: number; y: number } | null;
+  contact_display: { x: string; y: string } | null;
+}

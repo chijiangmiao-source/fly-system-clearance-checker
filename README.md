@@ -1,6 +1,8 @@
 # 舞台吊景越界彩排检测
 
 矩形吊景沿折线升降的连续扫掠碰撞检测系统：React 前端 + FastAPI API + 一次性 verify 服务。
+另含**独立的双吊景交会分析模块**（`POST /api/encounter`）：两套编号不同的吊景在同一总时长内
+等时运行，精确求两矩形的全程首次接触。
 
 ## 功能
 
@@ -98,6 +100,73 @@
 
 另提供 `GET /api/health` 健康检查。
 
+## 双吊景交会分析（`POST /api/encounter`）
+
+换景时两套吊景同步运行：以**编号不同的两套吊景及各自折线路线**组成交会方案，各自所有分段
+在**同一总时长** t∈[0,1] 内等时运行（段内匀速）。服务端按双方折点时刻 `i/n`、`j/m` 的并集
+切分共同时间轴，用**精确有理数**（`Fraction`）计算两个轴对齐矩形的首次接触；**边界接触也算
+冲突**。输入仍沿用台口尺寸与折线坐标规则，但无 `zones`。
+
+```json
+{
+  "stage": { "width": 10000, "height": 10000 },
+  "fly_a": {
+    "id": "A", "width": 1000, "height": 1000,
+    "start": { "x": 0, "y": 3000 },
+    "waypoints": [ { "x": 5000, "y": 3000 } ],
+    "end": { "x": 9000, "y": 3000 }
+  },
+  "fly_b": {
+    "id": "B", "width": 1000, "height": 1000,
+    "start": { "x": 9000, "y": 2000 },
+    "waypoints": [ { "x": 6000, "y": 4000 }, { "x": 3000, "y": 4000 } ],
+    "end": { "x": 0, "y": 2000 }
+  }
+}
+```
+
+- `fly_a.id` / `fly_b.id` 为非空字符串且**必须相异**（相同报 400，路径 `fly_b.id`）；
+- 两套吊景的尺寸、`start` / `waypoints` / `end` 规则与单吊景完全一致（正整数尺寸、台口内
+  整数坐标、相邻点不重复），字段路径分别落在 `fly_a.*`、`fly_b.*`，首个错误按
+  stage → fly_a（含整条路线）→ fly_b → 编号相异的文档顺序定位；
+- 双方分段数可以不同。
+
+**成功 200**（接触时）：
+
+```json
+{
+  "collides": true,
+  "t": 0.42105263157894735,
+  "t_display": "0.421053",
+  "t_fraction": "8/19",
+  "fly_a": {
+    "id": "A", "segment_index": 0, "segment_t_display": "0.842105",
+    "position": { "x": 4210.526315789473, "y": 3000.0 },
+    "position_display": { "x": "4210.526316", "y": "3000" }
+  },
+  "fly_b": {
+    "id": "B", "segment_index": 1, "segment_t_display": "0.263158",
+    "position": { "x": 5210.526315789473, "y": 4000.0 },
+    "position_display": { "x": "5210.526316", "y": "4000" }
+  },
+  "contact": { "x": 5210.526315789473, "y": 4000.0 },
+  "contact_display": { "x": "5210.526316", "y": "4000" }
+}
+```
+
+- `t` / `t_display` / `t_fraction`：全程首次接触时刻（half-up 六位）；
+- `fly_a` / `fly_b`：接触瞬间该吊景所在段号（从 0 起）、段内 t 展示值与左下角坐标；
+- `contact` / `contact_display`：接触位置（接触瞬间两矩形交集的中心；边/面接触时取接触面段中点）。
+
+全程无接触时 `collides: false`，`t*`、`fly_a`、`fly_b`、`contact*` 均为 `null`。
+折点两侧同时接触（前段段内 t=1 与后段段内 t=0 等价）时归前段。请求体非法 JSON / 非 UTF-8 /
+字段错误同样返回 **400 + 统一错误信封**（语法错误路径为 `""`）。
+
+页面顶部“双吊景交会分析”页签提供独立的交会方案编辑（粘贴或选文件）与检测入口：提交中、
+成功、校验失败为各自独立状态；成功后在既有可缩放俯视图能力之上**同时绘制两条路线**
+（各自安全段/危险段、起终与停位姿态）、双方首次接触姿态与接触点；校验失败时保留本次原文
+并清除上一次结果。
+
 ## 判定方法（连续扫掠，精确有理数运算）
 
 - 纯平移、相对姿态固定 ⇒ t>0 的首次接触必为“顶点—边”事件：矩形四角 vs 多边形边、
@@ -110,6 +179,12 @@
 - 折线路线逐段复用上述单段扫掠：以（全程等时 t、段序）汇总，段序小者优先
   —— 折点两侧同时命中（前段 t=1 与后段 t=0）时归前一段。
 
+双吊景交会（`app/encounter.py`）不涉及多边形：按双方折点时刻并集切分共同时间轴，小区间内
+双方各处于固定分段，两矩形在 x、y 轴上的边界坐标均为 t 的仿射函数。每个轴向“两移动区间
+相交”的时刻集是一个闭区间（相对位置 −s_b ≤ d(t) ≤ s_a，等号即接触），两轴区间相交即发生
+接触，取交集左端为该小区间首次接触时刻；自左向右扫描、严格更小时替换（折点接触归前段）。
+全程 `Fraction` 运算，并用 1200 组随机路线与稠密浮点采样交叉核对。
+
 ## 运行（Docker Compose）
 
 ```bash
@@ -121,15 +196,16 @@ docker compose run --rm verify     # 或 up 后单独执行一次性联调校验
 - `web`：nginx 托管前端静态文件，并将 `/api` 反向代理到 `api:8000`；
 - `api`：uvicorn 运行 FastAPI；
 - `verify`：一次性服务，等待 API 健康后执行碰撞/无碰撞/缺字段/自交/超长整数/
-  折线分段（第二段命中、折点归前段、多段安全、停位越界与重复、单段不回归）/Web 页面断言，
-  全部通过退出码 0。
+  折线分段（第二段命中、折点归前段、多段安全、停位越界与重复、单段不回归）/
+  双吊景交会（起始即接触、分段数不同中途相撞、时间错开安全、第二套越界、编号相同、原接口不回归）/
+  Web 页面断言，全部通过退出码 0。
 
 ## 本地开发与测试
 
 ```bash
 # API（Python 3.11）
 cd api && pip install -r requirements-dev.txt
-python -m pytest tests/ -q                 # 96 个用例：临界值、责任决胜、校验路径、折线分段
+python -m pytest tests/ -q                 # 用例：临界值、责任决胜、校验路径、折线分段、双吊景交会
 python -m uvicorn app.main:app --port 8000
 
 # 前端（Node 20）
@@ -145,11 +221,11 @@ cd web && npx playwright install chromium && npx playwright test
 
 ```
 ├── docker-compose.yml      # web / api / verify 编排，WEB_PORT、API_PORT 可覆盖
-├── api/                    # FastAPI：几何扫掠 + 校验 + 测试
-│   ├── app/{main,geometry,validation}.py
+├── api/                    # FastAPI：几何扫掠 + 校验 + 双吊景交会 + 测试
+│   ├── app/{main,geometry,encounter,validation}.py
 │   └── tests/              # pytest
 ├── web/                    # React + Vite + TS
-│   ├── src/                # App、StageView（可缩放折线俯视图）、lib（format/api/route）
+│   ├── src/                # App（页签）、StageView/EncounterView（可缩放俯视图）、StageCanvas、lib
 │   ├── e2e/                # Playwright 联调
 │   └── nginx.conf
 ├── verify/                 # 一次性联调校验服务

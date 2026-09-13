@@ -11,8 +11,9 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from .encounter import encounter_first_contact
 from .geometry import first_collision_segmented
-from .validation import FieldError, HugeInt, validate
+from .validation import FieldError, HugeInt, validate, validate_encounter
 
 getcontext().prec = 60
 
@@ -66,6 +67,27 @@ def _err(status: int, path: str, message: str) -> JSONResponse:
     )
 
 
+def _load_json_body(raw: bytes):
+    """解析请求体为 Python 对象。
+
+    成功返回 (payload, None)；失败返回 (None, JSONResponse)（沿用统一错误信封）。
+    """
+    if not raw:
+        return None, _err(400, "", "request body is empty")
+    try:
+        payload = json.loads(
+            raw.decode("utf-8"),
+            parse_int=_parse_json_int,
+            parse_constant=_reject_json_constant,
+        )
+    except UnicodeDecodeError:
+        return None, _err(400, "", "request body is not valid UTF-8")
+    except ValueError:
+        # JSON 语法错误（超长整数已由 parse_int 钩子绕过位限，不会走到这里）
+        return None, _err(400, "", "request body is not valid JSON")
+    return payload, None
+
+
 def _frac_decimal(t: Fraction) -> Decimal:
     return Decimal(t.numerator) / Decimal(t.denominator)
 
@@ -89,19 +111,9 @@ def health() -> dict:
 @app.post("/api/check")
 async def check(request: Request):
     raw = await request.body()
-    if not raw:
-        return _err(400, "", "request body is empty")
-    try:
-        payload = json.loads(
-            raw.decode("utf-8"),
-            parse_int=_parse_json_int,
-            parse_constant=_reject_json_constant,
-        )
-    except UnicodeDecodeError:
-        return _err(400, "", "request body is not valid UTF-8")
-    except ValueError:
-        # JSON 语法错误（超长整数已由 parse_int 钩子绕过位限，不会走到这里）
-        return _err(400, "", "request body is not valid JSON")
+    payload, bad = _load_json_body(raw)
+    if bad is not None:
+        return bad
 
     try:
         data = validate(payload)
@@ -131,4 +143,60 @@ async def check(request: Request):
         "segment_t_display": _t_display(local_t),
         "position": {"x": float(px), "y": float(py)},
         "position_display": {"x": _coord_display(px), "y": _coord_display(py)},
+    }
+
+
+_ENCOUNTER_EMPTY_RESULT = {
+    "collides": False,
+    "t": None,
+    "t_display": None,
+    "t_fraction": None,
+    "fly_a": None,
+    "fly_b": None,
+    "contact": None,
+    "contact_display": None,
+}
+
+
+def _encounter_pose(fly_id, segment_index, local_t, pos) -> dict:
+    px, py = pos
+    return {
+        "id": fly_id,
+        "segment_index": segment_index,
+        "segment_t_display": _t_display(local_t),
+        "position": {"x": float(px), "y": float(py)},
+        "position_display": {"x": _coord_display(px), "y": _coord_display(py)},
+    }
+
+
+@app.post("/api/encounter")
+async def encounter(request: Request):
+    """双吊景交会检测：两套吊景在同一总时长内等时运行的首次接触。"""
+    raw = await request.body()
+    payload, bad = _load_json_body(raw)
+    if bad is not None:
+        return bad
+
+    try:
+        data = validate_encounter(payload)
+    except FieldError as e:
+        return _err(400, e.path, e.message)
+
+    result = encounter_first_contact(data["fly_a"], data["fly_b"])
+    if result is None:
+        return _ENCOUNTER_EMPTY_RESULT
+
+    t, ia, ua, ib, ub, (pos_a, pos_b, contact) = result
+    return {
+        "collides": True,
+        "t": float(t),
+        "t_display": _t_display(t),
+        "t_fraction": f"{t.numerator}/{t.denominator}",
+        "fly_a": _encounter_pose(data["fly_a"]["id"], ia, ua, pos_a),
+        "fly_b": _encounter_pose(data["fly_b"]["id"], ib, ub, pos_b),
+        "contact": {"x": float(contact[0]), "y": float(contact[1])},
+        "contact_display": {
+            "x": _coord_display(contact[0]),
+            "y": _coord_display(contact[1]),
+        },
     }

@@ -1,0 +1,22 @@
+export const ENCOUNTER_SAMPLE = `{
+  "stage": { "width": 10000, "height": 10000 },
+  "fly_a": {
+    "id": "A",
+    "width": 1000,
+    "height": 1000,
+    "start": { "x": 0, "y": 3000 },
+    "waypoints": [ { "x": 5000, "y": 3000 } ],
+    "end": { "x": 9000, "y": 3000 }
+  },
+  "fly_b": {
+    "id": "B",
+    "width": 1000,
+    "height": 1000,
+    "start": { "x": 9000, "y": 2000 },
+    "waypoints": [
+      { "x": 6000, "y": 4000 },
+      { "x": 3000, "y": 4000 }
+    ],
+    "end": { "x": 0, "y": 2000 }
+  }
+}`;

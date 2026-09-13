@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { routePoints, splitRouteAtHit, toPointsAttr } from './route';
-import type { CheckResult, StagePayload } from './types';
+import { flyRoutePoints, routePoints, splitFlyRouteAtHit, splitRouteAtHit, toPointsAttr } from './route';
+import type { CheckResult, EncounterFly, StagePayload } from './types';
 
 const payload = (waypoints?: Array<{ x: number; y: number }>): StagePayload => ({
   stage: { width: 10000, height: 10000 },
@@ -134,5 +134,64 @@ describe('toPointsAttr', () => {
       (y) => 10000 - y,
     );
     expect(attr).toBe('0,10000 100,9750');
+  });
+});
+
+describe('交会方案：flyRoutePoints / splitFlyRouteAtHit', () => {
+  const flyA: EncounterFly = {
+    id: 'A',
+    width: 1000,
+    height: 1000,
+    start: { x: 0, y: 3000 },
+    waypoints: [{ x: 5000, y: 3000 }],
+    end: { x: 9000, y: 3000 },
+  };
+  const flyB: EncounterFly = {
+    id: 'B',
+    width: 1000,
+    height: 1000,
+    start: { x: 9000, y: 2000 },
+    waypoints: [
+      { x: 6000, y: 4000 },
+      { x: 3000, y: 4000 },
+    ],
+    end: { x: 0, y: 2000 },
+  };
+
+  it('flyRoutePoints 展开各自折线（双方分段数可不同）', () => {
+    expect(flyRoutePoints(flyA)).toHaveLength(3);
+    expect(flyRoutePoints(flyB)).toHaveLength(4);
+    expect(flyRoutePoints(flyB)[1]).toEqual({ x: 6000, y: 4000 });
+  });
+
+  it('双方分段数不同时按各自段号切分：A 在第 0 段、B 在第 1 段', () => {
+    // t=8/19：A 左下角 (80000/19,3000)（第 0 段），B 左下角 (99000/19,4000)（第 1 段）
+    const aHit = { x: 80000 / 19, y: 3000 };
+    const bHit = { x: 99000 / 19, y: 4000 };
+    const sa = splitFlyRouteAtHit(flyA, 0, aHit);
+    const sb = splitFlyRouteAtHit(flyB, 1, bHit);
+    expect(sa!.safe).toEqual([{ x: 0, y: 3000 }, aHit]);
+    expect(sa!.danger[0]).toEqual(aHit);
+    expect(sa!.danger).toContainEqual({ x: 5000, y: 3000 });
+    expect(sb!.safe).toEqual([
+      { x: 9000, y: 2000 },
+      { x: 6000, y: 4000 },
+      bHit,
+    ]);
+    expect(sb!.danger).toEqual([
+      bHit,
+      { x: 3000, y: 4000 },
+      { x: 0, y: 2000 },
+    ]);
+  });
+
+  it('起始即接触（段号 0、命中点即起点）：safe 折叠重合点', () => {
+    const split = splitFlyRouteAtHit(flyA, 0, { x: 0, y: 3000 });
+    expect(split!.safe).toEqual([{ x: 0, y: 3000 }]);
+    expect(split!.danger[0]).toEqual({ x: 0, y: 3000 });
+  });
+
+  it('越界段号返回 null', () => {
+    expect(splitFlyRouteAtHit(flyA, 5, { x: 1, y: 1 })).toBeNull();
   });
 });

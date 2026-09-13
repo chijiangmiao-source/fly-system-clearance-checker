@@ -311,7 +311,115 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         check("invalid UTF-8 request", False, repr(e))
 
-    # 8) Web 页面内容
+    # 8) 双吊景交会分析（独立模块 POST /api/encounter）
+    # 8a) 起始即接触（共边，t=0 也算冲突）
+    enc_start = {
+        "stage": {"width": 10000, "height": 10000},
+        "fly_a": {"id": "A", "width": 1000, "height": 1000,
+                  "start": {"x": 0, "y": 0}, "end": {"x": 4000, "y": 0}},
+        "fly_b": {"id": "B", "width": 1000, "height": 1000,
+                  "start": {"x": 1000, "y": 0}, "end": {"x": 5000, "y": 0}},
+    }
+    try:
+        r = httpx.post(f"{API}/api/encounter", json=enc_start, timeout=5)
+        body = r.json()
+        check("enc start-contact status", r.status_code == 200, str(r.status_code))
+        check("enc start-contact t", body.get("t_fraction") == "0/1", str(body))
+        check("enc start-contact seg a", body.get("fly_a", {}).get("segment_index") == 0, str(body))
+        check("enc start-contact seg b", body.get("fly_b", {}).get("segment_index") == 0, str(body))
+        check("enc start-contact point",
+              body.get("contact_display") == {"x": "1000", "y": "500"}, str(body))
+    except Exception as e:  # noqa: BLE001
+        check("enc start-contact request", False, repr(e))
+
+    # 8b) 分段数不同（A 两段、B 三段）中途首次相撞：t=8/19，A 在第 0 段、B 在第 1 段
+    enc_mid = {
+        "stage": {"width": 10000, "height": 10000},
+        "fly_a": {"id": "A", "width": 1000, "height": 1000,
+                  "start": {"x": 0, "y": 3000},
+                  "waypoints": [{"x": 5000, "y": 3000}],
+                  "end": {"x": 9000, "y": 3000}},
+        "fly_b": {"id": "B", "width": 1000, "height": 1000,
+                  "start": {"x": 9000, "y": 2000},
+                  "waypoints": [{"x": 6000, "y": 4000}, {"x": 3000, "y": 4000}],
+                  "end": {"x": 0, "y": 2000}},
+    }
+    try:
+        r = httpx.post(f"{API}/api/encounter", json=enc_mid, timeout=5)
+        body = r.json()
+        check("enc mid status 200", r.status_code == 200, str(r.status_code))
+        check("enc mid t exact", body.get("t_fraction") == "8/19", str(body))
+        check("enc mid t display", body.get("t_display") == "0.421053", str(body))
+        check("enc mid seg a", body.get("fly_a", {}).get("segment_index") == 0, str(body))
+        check("enc mid seg b", body.get("fly_b", {}).get("segment_index") == 1, str(body))
+        check("enc mid a pos", body.get("fly_a", {}).get("position_display") ==
+              {"x": "4210.526316", "y": "3000"}, str(body))
+        check("enc mid b pos", body.get("fly_b", {}).get("position_display") ==
+              {"x": "5210.526316", "y": "4000"}, str(body))
+        check("enc mid contact", body.get("contact_display") ==
+              {"x": "5210.526316", "y": "4000"}, str(body))
+    except Exception as e:  # noqa: BLE001
+        check("enc mid request", False, repr(e))
+
+    # 8c) 时间错开全程安全：B 先穿过走廊，A 后抵达
+    enc_safe = {
+        "stage": {"width": 10000, "height": 10000},
+        "fly_a": {"id": "A", "width": 1000, "height": 1000,
+                  "start": {"x": 0, "y": 4500},
+                  "waypoints": [{"x": 4500, "y": 4500}],
+                  "end": {"x": 9000, "y": 4500}},
+        "fly_b": {"id": "B", "width": 1000, "height": 1000,
+                  "start": {"x": 8000, "y": 0}, "end": {"x": 8000, "y": 9000}},
+    }
+    try:
+        r = httpx.post(f"{API}/api/encounter", json=enc_safe, timeout=5)
+        body = r.json()
+        check("enc safe status", r.status_code == 200 and body.get("collides") is False, r.text[:200])
+        check("enc safe null poses", body.get("fly_a") is None and body.get("contact") is None, str(body))
+    except Exception as e:  # noqa: BLE001
+        check("enc safe request", False, repr(e))
+
+    # 8d) 第二套吊景字段越界 → 400 + fly_b.start.x（沿用统一错误信封）
+    enc_bad_b = {
+        "stage": {"width": 10000, "height": 10000},
+        "fly_a": {"id": "A", "width": 1000, "height": 1000,
+                  "start": {"x": 0, "y": 0}, "end": {"x": 1000, "y": 0}},
+        "fly_b": {"id": "B", "width": 1000, "height": 1000,
+                  "start": {"x": 9001, "y": 0}, "end": {"x": 0, "y": 0}},
+    }
+    try:
+        r = httpx.post(f"{API}/api/encounter", json=enc_bad_b, timeout=5)
+        err = r.json().get("error", {})
+        check("enc fly_b oob 400", r.status_code == 400, str(r.status_code))
+        check("enc fly_b oob path", err.get("path") == "fly_b.start.x", r.text[:200])
+    except Exception as e:  # noqa: BLE001
+        check("enc fly_b oob request", False, repr(e))
+
+    # 8e) 两套吊景编号相同 → 400 + fly_b.id
+    enc_same_id = {
+        "stage": {"width": 10000, "height": 10000},
+        "fly_a": {**enc_safe["fly_a"]},
+        "fly_b": {**enc_safe["fly_b"], "id": "A"},
+    }
+    try:
+        r = httpx.post(f"{API}/api/encounter", json=enc_same_id, timeout=5)
+        err = r.json().get("error", {})
+        check("enc same id 400", r.status_code == 400, str(r.status_code))
+        check("enc same id path", err.get("path") == "fly_b.id", r.text[:200])
+    except Exception as e:  # noqa: BLE001
+        check("enc same id request", False, repr(e))
+
+    # 8f) 原有单吊景检查接口继续可用（命中既有 collision 结果，字段不回归）
+    try:
+        r = httpx.post(f"{API}/api/check", json=collision, timeout=5)
+        body = r.json()
+        check("legacy check still works",
+              r.status_code == 200 and body.get("t_display") == "0.333333"
+              and body.get("segment_index") == 0, str(body))
+    except Exception as e:  # noqa: BLE001
+        check("legacy check request", False, repr(e))
+
+    # 9) Web 页面内容
     try:
         r = httpx.get(f"{WEB}/", timeout=5)
         check("web html", r.status_code == 200 and '<div id="root">' in r.text, r.text[:120])
