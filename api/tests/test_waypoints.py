@@ -335,6 +335,47 @@ class TestWaypointValidation:
         assert code == 400
         assert body["error"]["path"] == "fly.end.x"
 
+    def test_start_oob_before_waypoint_type_error(self):
+        # 起点已越界且后续停位格式错误：路线顺序先指出起点横坐标越界
+        p = self._base([{"x": "oops", "y": 0}])
+        p["fly"]["start"] = {"x": -1, "y": 0}
+        code, body = post(p)
+        assert code == 400
+        assert body["error"]["path"] == "fly.start.x"
+
+    def test_start_oob_before_end_missing_field(self):
+        # 起点越界 + 终点缺字段：先报起点横坐标
+        p = self._base([{"x": 5000, "y": 5000}])
+        p["fly"]["start"] = {"x": -1, "y": 0}
+        p["fly"]["end"] = {"y": 0}
+        code, body = post(p)
+        assert code == 400
+        assert body["error"]["path"] == "fly.start.x"
+
+    def test_start_oob_before_end_not_object(self):
+        p = self._base([{"x": 5000, "y": 5000}])
+        p["fly"]["start"] = {"x": -1, "y": 0}
+        p["fly"]["end"] = [1, 2]
+        code, body = post(p)
+        assert code == 400
+        assert body["error"]["path"] == "fly.start.x"
+
+    def test_start_oob_x_before_start_bad_y(self):
+        # 同一点内 x 越界先于 y 的类型错误（x 先校验、先报错）
+        p = self._base([])
+        p["fly"]["start"] = {"x": -1, "y": "bad"}
+        code, body = post(p)
+        assert code == 400
+        assert body["error"]["path"] == "fly.start.x"
+
+    def test_start_bounds_before_later_waypoint_duplicate_check(self):
+        # 起点越界时，即便后续停位与起点重复，也先报起点越界
+        p = self._base([{"x": -1, "y": 0}])
+        p["fly"]["start"] = {"x": -1, "y": 0}
+        code, body = post(p)
+        assert code == 400
+        assert body["error"]["path"] == "fly.start.x"
+
 
 class TestWaypointValidationDirect:
     def test_validate_returns_waypoints(self):

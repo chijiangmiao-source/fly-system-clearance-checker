@@ -240,6 +240,21 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         check("waypoint-before-end oob request", False, repr(e))
 
+    # 6h) 起点越界且后续停位格式错误 → 先报起点横坐标（每点结构/类型/越界按路线顺序逐点校验）
+    sbo = {"stage": {"width": 10000, "height": 10000},
+           "fly": {"width": 1000, "height": 1000,
+                   "start": {"x": -1, "y": 0},
+                   "waypoints": [{"x": "oops", "y": 0}],
+                   "end": {"x": 9000, "y": 9000}},
+           "zones": []}
+    try:
+        r = httpx.post(f"{API}/api/check", json=sbo, timeout=5)
+        err = r.json().get("error", {})
+        check("start-oob-first 400", r.status_code == 400, str(r.status_code))
+        check("start-oob-first path", err.get("path") == "fly.start.x", r.text[:200])
+    except Exception as e:  # noqa: BLE001
+        check("start-oob-first request", False, repr(e))
+
     # 7a) 非标准数值常量 NaN：属非法 JSON 语法 → 400 + path ""，不得报字段类型错误
     nan_text = (
         '{"stage":{"width":10000,"height":10000},'

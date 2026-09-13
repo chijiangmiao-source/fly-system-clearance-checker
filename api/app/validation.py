@@ -95,6 +95,15 @@ def _object_field(obj: dict, key: str, path: str) -> dict:
     return v
 
 
+def _as_object(v: object, path: str) -> dict:
+    """与 _object_field 相同的对象判定，但直接接受值（用于路线逐点校验）。"""
+    if v is _MISSING:
+        raise FieldError(path, "missing required field")
+    if not isinstance(v, dict):
+        raise FieldError(path, "must be an object")
+    return v
+
+
 def _validate_polygon(pts: list[tuple[int, int]], path: str) -> None:
     n = len(pts)
     # 零长边（含首尾重复导致的闭合退化边）
@@ -148,15 +157,21 @@ def validate(payload: object) -> dict:
     if fh < 1:
         raise FieldError("fly.height", "must be a positive integer")
 
-    def _point_types(obj: dict, path: str) -> dict:
-        # 仅做结构与整数类型校验（缺字段、非对象、非整数），不做台口越界判定
-        x = _int_field(obj, "x", f"{path}.x")
-        y = _int_field(obj, "y", f"{path}.y")
+    def _check_point(v: object, path: str) -> dict:
+        # 单个路线点：结构 → 类型 → 台口越界，x 先于 y，
+        # 使调用方严格按路线顺序逐点校验时首个错误定位正确
+        pt = _as_object(v, path)
+        x = _int_field(pt, "x", f"{path}.x")
+        if x < 0 or x + fw > STAGE_SIZE:
+            raise FieldError(f"{path}.x", "fly must stay within the stage")
+        y = _int_field(pt, "y", f"{path}.y")
+        if y < 0 or y + fh > STAGE_SIZE:
+            raise FieldError(f"{path}.y", "fly must stay within the stage")
         return {"x": x, "y": y}
 
-    # 第一轮：结构与类型。停位在路线顺序上位于终点之前，
-    # 其结构/类型错误须先于终点报出（与越界判定分开，见下方第二轮）。
-    start = _point_types(_object_field(fly, "start", "fly.start"), "fly.start")
+    # 严格按路线顺序 start → 各停位 → end 逐点校验（每点结构、类型、越界一并完成）：
+    # 起点越界必须先于后续停位/终点的任何错误；停位又先于终点。
+    start = _check_point(fly.get("start", _MISSING), "fly.start")
 
     # 可选中途停位：按 start → 各停位 → end 组成折线路线
     waypoints: list[dict] | None = None
@@ -165,46 +180,27 @@ def validate(payload: object) -> dict:
         if not isinstance(wps_raw, list):
             raise FieldError("fly.waypoints", "must be an array")
         waypoints = []
-        for i, wp in enumerate(wps_raw):
-            wpath = f"fly.waypoints.{i}"
-            if not isinstance(wp, dict):
-                raise FieldError(wpath, "must be an object")
-            waypoints.append(_point_types(wp, wpath))
-
-    end = _point_types(_object_field(fly, "end", "fly.end"), "fly.end")
-
-    def _check_bounds(pt: dict, path: str) -> None:
-        if pt["x"] < 0 or pt["x"] + fw > STAGE_SIZE:
-            raise FieldError(f"{path}.x", "fly must stay within the stage")
-        if pt["y"] < 0 or pt["y"] + fh > STAGE_SIZE:
-            raise FieldError(f"{path}.y", "fly must stay within the stage")
-
-    # 第二轮：严格按路线顺序 start → 各停位 → end 做语义校验
-    # （越界、相邻重复），保证首个错误指向路线上最先出错的位置。
-    _check_bounds(start, "fly.start")
-    if waypoints is not None:
         prev = start
-        for i, pt in enumerate(waypoints):
+        for i, wp_raw in enumerate(wps_raw):
             wpath = f"fly.waypoints.{i}"
-            _check_bounds(pt, wpath)
+            pt = _check_point(wp_raw, wpath)
             # 相邻重复点（含与起点重合），错误定位到后一个停位的下标
             if pt == prev:
                 raise FieldError(
                     wpath, f"duplicate adjacent waypoint at ({pt['x']}, {pt['y']})"
                 )
+            waypoints.append(pt)
             prev = pt
-        # 末停位与终点重合：错误位置在末停位（路线上早于终点），
-        # 须在终点越界检查之前判定，仍定位到该停位下标
-        if waypoints and waypoints[-1] == end:
-            x = waypoints[-1]["x"]
-            y = waypoints[-1]["y"]
-            k = len(waypoints) - 1
-            raise FieldError(
-                f"fly.waypoints.{k}", f"duplicate adjacent waypoint at ({x}, {y})"
-            )
-    _check_bounds(end, "fly.end")
 
-    corners = {"start": start, "end": end}
+    end = _check_point(fly.get("end", _MISSING), "fly.end")
+    # 末停位与终点重合：错误位置在末停位（路线上早于终点），仍定位到该停位下标
+    if waypoints and waypoints[-1] == end:
+        x = waypoints[-1]["x"]
+        y = waypoints[-1]["y"]
+        k = len(waypoints) - 1
+        raise FieldError(
+            f"fly.waypoints.{k}", f"duplicate adjacent waypoint at ({x}, {y})"
+        )
 
     zones_raw = _required(payload, "zones", "zones")
     if not isinstance(zones_raw, list):
@@ -242,8 +238,8 @@ def validate(payload: object) -> dict:
         "fly": {
             "width": fw,
             "height": fh,
-            "start": corners["start"],
-            "end": corners["end"],
+            "start": start,
+            "end": end,
             "waypoints": waypoints,
         },
         "zones": zones,

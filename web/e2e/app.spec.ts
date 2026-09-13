@@ -341,6 +341,24 @@ test('终点与首个停位同时越界：按路线顺序先报首个停位横�
   await expect(page.getByTestId('error-path')).toHaveText('fly.waypoints.0.x');
 });
 
+test('起点越界且后续停位格式错误：先报起点横坐标，再轮不到后面的错误', async ({ page }) => {
+  const START_OOB_LATER_BAD = JSON.stringify({
+    stage: { width: 10000, height: 10000 },
+    fly: {
+      width: 1000,
+      height: 1000,
+      start: { x: -1, y: 0 },
+      waypoints: [{ x: 'oops', y: 0 }],
+      end: { x: 9000, y: 9000 },
+    },
+    zones: [],
+  });
+  await page.goto('/');
+  await page.getByTestId('payload-input').fill(START_OOB_LATER_BAD);
+  await page.getByTestId('submit-btn').click();
+  await expect(page.getByTestId('error-path')).toHaveText('fly.start.x');
+});
+
 test('停位横坐标写成非标准数值常量 NaN：按 JSON 语法错误拒绝（字段路径为根）', async ({ page }) => {
   // 不用 JSON.stringify：NaN 不是合法 JSON，需要保留原文提交
   const NAN_BODY =
