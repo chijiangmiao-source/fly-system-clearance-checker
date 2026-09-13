@@ -660,6 +660,42 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         check("window zones-order request", False, repr(e))
 
+    # 9i) 非凸禁入区（U 形空腔）：窗口只覆盖空腔穿行时段 → 安全；覆盖臂接触 → 命中
+    u_zone = {"id": "U", "vertices": [
+        {"x": 3000, "y": 1000}, {"x": 7000, "y": 1000}, {"x": 7000, "y": 5000}, {"x": 6000, "y": 5000},
+        {"x": 6000, "y": 2000}, {"x": 4000, "y": 2000}, {"x": 4000, "y": 5000}, {"x": 3000, "y": 5000}]}
+    u_fly = {"width": 1000, "height": 1000, "start": {"x": 0, "y": 3000}, "end": {"x": 9000, "y": 3000}}
+
+    def u_payload(window):
+        z = dict(u_zone)
+        if window is not None:
+            z["active_window"] = window
+        return {"stage": {"width": 10000, "height": 10000}, "fly": u_fly, "zones": [z]}
+
+    try:
+        # 空腔穿行时段 (4/9, 5/9)：窗口 [0.45, 0.55] 完全落在空腔内 → 不得误报
+        r = httpx.post(f"{API}/api/check",
+                       json=u_payload({"start_tick": 450000, "end_tick": 550000}), timeout=5)
+        body = r.json()
+        check("u-shape cavity window safe",
+              r.status_code == 200 and body.get("collides") is False, str(body))
+        # 窗口 [0.3, 0.4] 覆盖左臂接触 → 命中 t=3/10
+        r = httpx.post(f"{API}/api/check",
+                       json=u_payload({"start_tick": 300000, "end_tick": 400000}), timeout=5)
+        body = r.json()
+        check("u-shape arm window hits",
+              r.status_code == 200 and body.get("collides") is True
+              and body.get("zone_id") == "U" and body.get("t_display") == "0.300000"
+              and body.get("active_window") == {"start_tick": 300000, "end_tick": 400000}, str(body))
+        # 无窗口时仍命中左臂首触 t=2/9（非凸几何本身不回归）
+        r = httpx.post(f"{API}/api/check", json=u_payload(None), timeout=5)
+        body = r.json()
+        check("u-shape no-window hits",
+              r.status_code == 200 and body.get("t_fraction") == "2/9"
+              and body.get("edge_index") == 7, str(body))
+    except Exception as e:  # noqa: BLE001
+        check("u-shape request", False, repr(e))
+
     # 10) Web 页面内容
     try:
         r = httpx.get(f"{WEB}/", timeout=5)

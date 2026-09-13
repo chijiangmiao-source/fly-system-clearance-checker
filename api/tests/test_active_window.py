@@ -283,6 +283,86 @@ class TestSegmentedWindows:
         assert got == (Fraction(500001, 1000000), 1, Fraction(1, 500000), "B", 0, 0)
 
 
+class TestNonConvexZoneWindows:
+    """非凸禁入区（U 形空腔）：接触时刻集是多个不相交闭区间的并。
+
+    吊景穿过 U 形中间空腔时不接触禁入区；窗口只覆盖空腔时刻不得误报。
+    """
+
+    # U 形：底梁 y∈[1000,2000]，左右臂 x∈[3000,4000] / [6000,7000]（y≤5000），
+    # 空腔 x∈(4000,6000) y∈(2000,5000) 向上开口
+    U_VERTS = [
+        (3000, 1000), (7000, 1000), (7000, 5000), (6000, 5000),
+        (6000, 2000), (4000, 2000), (4000, 5000), (3000, 5000),
+    ]
+    U_ZONE = {
+        "id": "U",
+        "vertices": [{"x": x, "y": y} for x, y in U_VERTS],
+    }
+    # 吊景 y∈[3000,4000] 水平穿过：左臂接触 [2/9, 4/9]，空腔 (4/9, 5/9) 无接触，
+    # 右臂接触 [5/9, 7/9]
+    U_FLY = {"width": 1000, "height": 1000, "start": {"x": 0, "y": 3000}, "end": {"x": 9000, "y": 3000}}
+
+    def u_zone(self, start_tick=None, end_tick=None):
+        z = json.loads(json.dumps(self.U_ZONE))
+        if start_tick is not None:
+            z["active_window"] = {"start_tick": start_tick, "end_tick": end_tick}
+        return z
+
+    def test_no_window_first_contact_left_arm(self):
+        got = first_collision(self.U_FLY, [self.u_zone()])
+        assert got == (Fraction(2, 9), "U", 7, 0)
+
+    def test_cavity_only_window_is_safe(self):
+        # 窗口 [0.45, 0.55] 完全落在空腔穿行时段 (4/9, 5/9) 内 → 不得误报
+        got = first_collision(self.U_FLY, [self.u_zone(450000, 550000)])
+        assert got is None
+
+    def test_cavity_window_strictly_inside_gap(self):
+        got = first_collision(self.U_FLY, [self.u_zone(444445, 555555)])
+        assert got is None
+
+    def test_window_overlapping_arm_end_counts(self):
+        # 窗口起点 0.444444 早于左臂接触结束 4/9=0.444444… → 窗口起点处碰撞；
+        # 此时矩形已滑至臂内侧，责任边为左臂内壁（边 5）
+        got = first_collision(self.U_FLY, [self.u_zone(444444, 550000)])
+        assert got == (Fraction(111111, 250000), "U", 5, 0)
+
+    def test_left_arm_window_hits(self):
+        got = first_collision(self.U_FLY, [self.u_zone(300000, 400000)])
+        assert got == (Fraction(3, 10), "U", 7, 0)
+
+    def test_right_arm_window_hits(self):
+        # 窗口 [0.6, 0.7] 只覆盖右臂接触区间 [5/9, 7/9] → t=3/5，责任边为右内壁 3
+        got = first_collision(self.U_FLY, [self.u_zone(600000, 700000)])
+        assert got == (Fraction(3, 5), "U", 3, 0)
+
+    def test_window_covering_gap_and_arm_uses_arm_interval(self):
+        # 窗口 [0.25, 0.65] 覆盖空腔与两臂：最早碰撞仍是左臂区间内的窗口起点
+        got = first_collision(self.U_FLY, [self.u_zone(250000, 650000)])
+        assert got == (Fraction(1, 4), "U", 7, 0)
+
+    def test_cavity_window_api_safe(self):
+        p = {"stage": dict(STAGE), "fly": dict(self.U_FLY),
+             "zones": [self.u_zone(450000, 550000)]}
+        code, body = post(p)
+        assert code == 200
+        assert body["collides"] is False
+        assert body["active_window"] is None
+
+    def test_arm_window_api_hit(self):
+        p = {"stage": dict(STAGE), "fly": dict(self.U_FLY),
+             "zones": [self.u_zone(300000, 400000)]}
+        code, body = post(p)
+        assert code == 200
+        assert body["collides"] is True
+        assert body["zone_id"] == "U"
+        assert body["t_display"] == "0.300000"
+        assert body["edge_index"] == 7
+        assert body["active_window"] == {"start_tick": 300000, "end_tick": 400000}
+        assert body["active_window_display"] == {"start": "0.300000", "end": "0.400000"}
+
+
 class TestActiveWindowApi:
     def test_hit_echoes_window_and_display(self):
         code, body = post(payload_with(accept_zones({"start_tick": 600000, "end_tick": 800000}),

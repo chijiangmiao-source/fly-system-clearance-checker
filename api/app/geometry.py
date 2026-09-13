@@ -13,9 +13,11 @@
     或多边形顶点落在矩形边上（平行共线时退化为区间首端点）。
   * t=0 时可能已然相交，需要额外的静态判定：
     边—边相交（含跨穿）、矩形严格含于多边形、多边形严格含于矩形。
-  * 接触区间 [t_in, t_out]：矩形与单条多边形边均为凸形，其接触时刻集为
-    单个闭区间，由各顶点-边事件接触子区间的首尾端点合成；区间的纯包含
-    （不接触边的内部重叠）由 t=0 / t=1 的静态包含判定补足。
+  * 接触时刻集：矩形与单条多边形边均为凸形，其接触时刻集为单个闭区间，
+    由各顶点-边事件接触子区间的首尾端点合成（t=0 / t=1 的跨穿由静态判定补足）。
+    禁入区（可非凸）的接触时刻集是各边区间的并，再加上无边界接触空隙中
+    纯包含（矩形严格含于多边形 / 多边形严格含于矩形）的时段；
+    U 形空腔等不接触间隙不会被并入。
 """
 
 from __future__ import annotations
@@ -218,35 +220,69 @@ def zone_contact_window(
 ) -> Optional[Tuple[Fraction, int]]:
     """单个禁入区在启用窗口内的 (首次碰撞时刻, 责任边序号)；无碰撞返回 None。
 
-    接触区间 [t_in, t_out] 与启用窗口 [w_lo, w_hi] 为同一时间轴上的闭区间，
-    仅当两者重叠（含端点相触）时才计碰撞，最早碰撞时刻为 max(t_in, w_lo)。
-    纯包含（矩形严格含于多边形 / 多边形严格含于矩形，不接触其边）责任边规定为 0。
+    接触时刻集是若干闭区间的并（非凸禁入区可互不相交，如 U 形空腔两侧）：
+    各边接触区间的并集，加上无边界接触空隙中的纯包含段（矩形严格含于多边形 /
+    多边形严格含于矩形）。启用窗口 [w_lo, w_hi] 与接触区间均为同一时间轴上的
+    闭区间，仅当某段接触区间与窗口重叠（含端点相触）时才计碰撞，
+    最早碰撞时刻为该段 max(区间起点, w_lo) 的最小值。
+    纯包含（不接触其边）时段内的碰撞责任边规定为 0。
     """
     n = len(vertices)
     intervals = [
         _edge_contact_interval(vertices[j], vertices[(j + 1) % n], start, d, w, h)
         for j in range(n)
     ]
-    los = [iv[0] for iv in intervals if iv is not None]
-    his = [iv[1] for iv in intervals if iv is not None]
-    t_in = min(los) if los else None
-    t_out = max(his) if his else None
+    # 边界接触时刻集：各边接触区间（各自精确）合并为有序不相交闭区间
+    boundary: list[list[Fraction]] = []
+    for lo, hi in sorted(iv for iv in intervals if iv is not None):
+        if boundary and lo <= boundary[-1][1]:
+            if hi > boundary[-1][1]:
+                boundary[-1][1] = hi
+        else:
+            boundary.append([lo, hi])
 
-    def strictly_overlapping(pos: Point) -> bool:
+    # 边界接触并集在 [0,1] 中的空隙：空隙内无边界接触，而纯包含状态只在
+    # 边界接触事件处改变，故每个空隙内包含状态恒定，取中点判定即可；
+    # 包含成立的空隙，其闭包整段计入接触时刻集
+    def strictly_overlapping_at(u: Fraction) -> bool:
+        pos = (start[0] + u * d[0], start[1] + u * d[1])
         return point_strictly_in_polygon(pos, vertices) or any(
             _point_strictly_in_rect(v, pos, w, h) for v in vertices
         )
 
-    # 端点处的纯包含（无边界接触的内部重叠）：接触区间延伸至该端点
-    if t_in != _ZERO and strictly_overlapping(start):
-        t_in = _ZERO
-    if t_out != _ONE and strictly_overlapping((start[0] + d[0], start[1] + d[1])):
-        t_out = _ONE
-    if t_in is None or t_out is None:
-        return None
-    # 闭区间重叠：窗口端点接触也算碰撞
-    t = max(t_in, w_lo)
-    if t > min(t_out, w_hi):
+    gaps: list[Tuple[Fraction, Fraction]] = []
+    if not boundary:
+        gaps.append((_ZERO, _ONE))
+    else:
+        if boundary[0][0] > _ZERO:
+            gaps.append((_ZERO, boundary[0][0]))
+        for k in range(len(boundary) - 1):
+            gaps.append((boundary[k][1], boundary[k + 1][0]))
+        if boundary[-1][1] < _ONE:
+            gaps.append((boundary[-1][1], _ONE))
+
+    pieces: list[Tuple[Fraction, Fraction]] = [tuple(iv) for iv in boundary]
+    for g_lo, g_hi in gaps:
+        if g_lo < g_hi and strictly_overlapping_at((g_lo + g_hi) / 2):
+            pieces.append((g_lo, g_hi))
+
+    # 合并为最终接触区间列（空隙闭包与相邻边界区间端点相接，一并合并）
+    contact: list[list[Fraction]] = []
+    for lo, hi in sorted(pieces):
+        if contact and lo <= contact[-1][1]:
+            if hi > contact[-1][1]:
+                contact[-1][1] = hi
+        else:
+            contact.append([lo, hi])
+
+    # 窗口重叠：按时间顺序取第一段与窗口重叠（闭区间，端点相触也算）的接触区间
+    t: Optional[Fraction] = None
+    for lo, hi in contact:
+        cand = max(lo, w_lo)
+        if cand <= min(hi, w_hi):
+            t = cand
+            break
+    if t is None:
         return None
     # 责任边：t 时刻仍接触的最小边序号（顶点接触同时计入两条相邻边）；
     # 无任何边接触即纯包含，责任边规定为 0

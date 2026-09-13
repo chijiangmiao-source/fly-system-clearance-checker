@@ -314,6 +314,40 @@ test('启用窗口刻度越界：定位到 zones 下标内字段', async ({ page
   await expect(page.getByTestId('stage-view')).toHaveCount(0);
 });
 
+// U 形（非凸）禁入区：吊景穿过中间空腔，窗口只在空腔时刻启用 → 不得误报
+const U_SHAPE_CAVITY = JSON.stringify({
+  stage: { width: 10000, height: 10000 },
+  fly: { width: 1000, height: 1000, start: { x: 0, y: 3000 }, end: { x: 9000, y: 3000 } },
+  zones: [
+    {
+      id: 'U',
+      vertices: [
+        { x: 3000, y: 1000 },
+        { x: 7000, y: 1000 },
+        { x: 7000, y: 5000 },
+        { x: 6000, y: 5000 },
+        { x: 6000, y: 2000 },
+        { x: 4000, y: 2000 },
+        { x: 4000, y: 5000 },
+        { x: 3000, y: 5000 },
+      ],
+      active_window: { start_tick: 450000, end_tick: 550000 },
+    },
+  ],
+});
+
+test('U 形空腔：窗口只在空腔时刻启用时仍显示全绿，不误报碰撞', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('payload-input').fill(U_SHAPE_CAVITY);
+  await page.getByTestId('submit-btn').click();
+
+  await expect(page.getByTestId('safe-message')).toBeVisible();
+  await expect(page.getByTestId('path-safe')).toHaveCount(1);
+  await expect(page.getByTestId('path-danger')).toHaveCount(0);
+  await expect(page.getByTestId('collision-pose')).toHaveCount(0);
+  await expect(page.getByTestId('zone-window-U')).toHaveText('生效 [0.450000, 0.550000]');
+});
+
 test('碰撞场景：展示 t、责任区、责任边与碰撞姿态', async ({ page }) => {
   await page.goto('/');
   await page.getByTestId('payload-input').fill(COLLISION);
